@@ -2,38 +2,27 @@ import shutil
 import subprocess
 import sys
 
-# ================= CONFIGURATION =================
-# Base name for the output file (without extension)
-BASE_NAME = "codebase_context"
-
-# Active tool selection
-CURRENT_TOOL = "repomix"  # Options: "repomix", "gitingest"
-
-# Strategy definitions: Decouples tool logic from execution
-STRATEGIES = {
-    "repomix": {
-        "cmd": ["repomix", "--output", "{out}", "--style", "xml"],
-        "ext": ".xml",
-    },
-    "gitingest": {"cmd": ["gitingest", ".", "-o", "{out}"], "ext": ".txt"},
-}
-# =================================================
+OUTPUT_FILE = "codebase_context.xml"
 
 
 def main():
-    # 1. Validate tool availability
-    if not shutil.which(CURRENT_TOOL):
-        sys.exit(f"❌ Error: '{CURRENT_TOOL}' is not installed or not in PATH.")
+    if not shutil.which("repomix"):
+        sys.exit("❌ Error: 'repomix' is not installed.")
 
-    # 2. Resolve strategy and filename
-    config = STRATEGIES.get(CURRENT_TOOL)
-    output_file = f"{BASE_NAME}{config['ext']}"
+    # Repomix respects .gitignore by default.
+    # We explicitly use --include to capture local environment details (e.g., nvcc, nvidia-smi)
+    # that are excluded from version control but essential for LLM context.
+    cmd = [
+        "repomix",
+        "--output",
+        OUTPUT_FILE,
+        "--style",
+        "xml",
+        "--include",
+        "llm_context/**/*",
+    ]
 
-    # 3. Build command dynamically
-    # Formats the command list by injecting the output filename
-    cmd = [arg.format(out=output_file) for arg in config["cmd"]]
-
-    print(f"🚀 Packing codebase into '{output_file}' using {CURRENT_TOOL}...")
+    print(f"🚀 Packing codebase into '{OUTPUT_FILE}'...")
 
     try:
         subprocess.run(cmd, check=True)

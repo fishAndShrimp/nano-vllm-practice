@@ -1,9 +1,14 @@
 # ==============================
-# LLM Context / Wrapper Outputs
+# Local Environment Context
 # ==============================
-# Ignores outputs from repo2txt.py regardless of the underlying tool
+# Exclude machine-specific details (nvcc, drivers, conda config) from Git.
+# Note: These are forcibly included in the LLM context via repo2txt.py.
+llm_context/
+
+# ==============================
+# Repomix / Tool Outputs
+# ==============================
 codebase_context.xml
-codebase_context.txt
 
 # ==============================
 # C++ / CUDA Build Artifacts
@@ -25,9 +30,8 @@ venv/
 .vscode/
 
 # ==============================
-# Model Weights (Critical)
+# Model Weights
 # ==============================
-# Prevent accidental commits of large weight files
 *.pt
 *.pth
 *.safetensors
