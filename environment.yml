@@ -1,28 +1,31 @@
 name: nanovllm
 channels:
-  - pytorch
+  - nvidia
   - defaults
 dependencies:
   - python=3.10
 
-  # PyTorch with CUDA 12.1 toolchain (includes nvcc for compilation)
-  - pytorch-cuda=12.1
-  - pytorch
-  - torchvision
-  - torchaudio
-
-  # Build tools for C++/CUDA extensions
+  # CUDA Compiler & Build Tools (Required for custom kernels)
+  - cuda-nvcc
+  - cuda-cudart
   - ninja
   - packaging
   - setuptools
   - wheel
 
-  # Scientific & LLM utilities
+  # Scientific basics
   - numpy
   - safetensors
 
   - pip
   - pip:
+      # PyTorch with CUDA 12.1 (Stable choice for LLM/FlashAttention)
+      - --extra-index-url https://download.pytorch.org/whl/cu121
+      - torch
+      - torchvision
+      - torchaudio
+
+      # Utilities
       - triton
       - pytest
       - matplotlib
