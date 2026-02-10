@@ -10,16 +10,15 @@ def main():
         sys.exit("❌ Error: 'repomix' is not installed.")
 
     # Repomix respects .gitignore by default.
-    # We explicitly use --include to capture local environment details (e.g., nvcc, nvidia-smi)
-    # that are excluded from version control but essential for LLM context.
+    # However, we use a '.repomixignore' file to explicitly "un-ignore" the
+    # .for_ai directory. This ensures local context is captured in the XML
+    # without needing complex CLI flags or polluting the Git history.
     cmd = [
         "repomix",
         "--output",
         OUTPUT_FILE,
         "--style",
         "xml",
-        "--include",
-        ".for_ai/**/*",
     ]
 
     print(f"🚀 Packing codebase into '{OUTPUT_FILE}'...")

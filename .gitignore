@@ -2,7 +2,7 @@
 # Local Environment Context
 # ==============================
 # Exclude machine-specific details (nvcc, drivers, conda config) from Git.
-# Note: These are forcibly included in the LLM context via repo2txt.py.
+# Note: These are re-included in the LLM context via .repomixignore rules.
 .for_ai/*
 
 # Whitelist documentation and example files

@@ -1,0 +1,2 @@
+# Un-ignore the context folder (Override .gitignore)
+!.for_ai/*
