@@ -1,0 +1,9 @@
+# [ACTION REQUIRED / 需要操作]
+# This file is a placeholder. To inject your local GPU context, run:
+# 此文件仅为占位符。如需注入你的本地 GPU 上下文，请运行：
+
+# From Root / 根目录执行:
+nvcc --version > .for_ai/nvcc_version.txt
+
+# From Here / 当前目录执行:
+nvcc --version > nvcc_version.txt

@@ -3,7 +3,11 @@
 # ==============================
 # Exclude machine-specific details (nvcc, drivers, conda config) from Git.
 # Note: These are forcibly included in the LLM context via repo2txt.py.
-llm_context/
+.for_ai/*
+
+# Whitelist documentation and example files
+!.for_ai/README.md
+!.for_ai/nvcc_version.example
 
 # ==============================
 # Repomix / Tool Outputs

@@ -19,7 +19,7 @@ def main():
         "--style",
         "xml",
         "--include",
-        "llm_context/**/*",
+        ".for_ai/**/*",
     ]
 
     print(f"🚀 Packing codebase into '{OUTPUT_FILE}'...")
