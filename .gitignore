@@ -1,0 +1,40 @@
+# ==============================
+# LLM Context / Wrapper Outputs
+# ==============================
+# Ignores outputs from repo2txt.py regardless of the underlying tool
+codebase_context.xml
+codebase_context.txt
+
+# ==============================
+# C++ / CUDA Build Artifacts
+# ==============================
+build/
+bin/
+*.o
+*.so
+*.a
+*.exe
+
+# ==============================
+# Python & Environment
+# ==============================
+__pycache__/
+*.py[cod]
+venv/
+.env
+.vscode/
+
+# ==============================
+# Model Weights (Critical)
+# ==============================
+# Prevent accidental commits of large weight files
+*.pt
+*.pth
+*.safetensors
+*.bin
+*.onnx
+
+# ==============================
+# OS Files
+# ==============================
+.DS_Store
