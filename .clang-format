@@ -1,0 +1,17 @@
+---
+Language: Cpp
+BasedOnStyle: Google
+
+# Indentation: Use 4 spaces to match Python style (Google default is 2)
+IndentWidth: 4
+TabWidth: 4
+
+# Line Length: Prevent aggressive wrapping
+ColumnLimit: 100
+
+# Includes: Sort headers automatically (System -> 3rd Party -> Local)
+SortIncludes: true
+IncludeBlocks: Preserve
+
+# CUDA: Treat .cu files as standard C++
+Standard: Auto

@@ -1,0 +1,36 @@
+{
+  // ==================================================
+  // Python Configuration (Ruff)
+  // ==================================================
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll": "explicit",
+      "source.organizeImports": "explicit"
+    }
+  },
+  // ==================================================
+  // C++ / CUDA Configuration
+  // ==================================================
+  // Treat .cu/.cuh files as C++ to enable IntelliSense & Formatting
+  "files.associations": {
+    "*.cu": "cpp",
+    "*.cuh": "cpp"
+  },
+  // Use Microsoft C/C++ Extension for formatting
+  "[cpp]": {
+    "editor.defaultFormatter": "ms-vscode.cpptools"
+  },
+  // Enforce formatting style using the .clang-format file in root
+  "C_Cpp.clang_format_style": "file",
+  // Recursively search workspace for headers.
+  // Note: System headers (CUDA/Python) are handled by the environment, not hardcoded here.
+  "C_Cpp.default.includePath": [
+    "${workspaceFolder}/**"
+  ],
+  // ==================================================
+  // Global Settings
+  // ==================================================
+  "editor.formatOnSave": true
+}
