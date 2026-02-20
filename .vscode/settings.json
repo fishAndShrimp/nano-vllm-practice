@@ -11,24 +11,34 @@
     }
   },
   // ==================================================
-  // C++ / CUDA Configuration
+  // Clangd Configuration (Replaces MS C/C++)
   // ==================================================
-  // Treat .cu/.cuh files as C++ to enable IntelliSense & Formatting
-  "files.associations": {
-    "*.cu": "cpp",
-    "*.cuh": "cpp"
-  },
-  // Use Microsoft C/C++ Extension for formatting
-  "[cpp]": {
-    "editor.defaultFormatter": "ms-vscode.cpptools"
-  },
-  // Enforce formatting style using the .clang-format file in root
-  "C_Cpp.clang_format_style": "file",
-  // Recursively search workspace for headers.
-  // Note: System headers (CUDA/Python) are handled by the environment, not hardcoded here.
-  "C_Cpp.default.includePath": [
-    "${workspaceFolder}/**"
+  // 1. Disable Microsoft IntelliSense to prevent conflicts with Clangd.
+  // We only keep the extension installed for Debugging, not for code completion.
+  "C_Cpp.intelliSenseEngine": "disabled",
+  "C_Cpp.errorSquiggles": "disabled",
+  "C_Cpp.autocomplete": "disabled",
+  // 2. Configure Clangd arguments for performance and CUDA support.
+  "clangd.arguments": [
+    "--background-index", // Index project in the background
+    "--clang-tidy", // Enable static analysis
+    "--completion-style=detailed", // Show detailed info in suggestions
+    "--header-insertion=never", // Prevent auto-inserting headers (often buggy with CUDA)
+    "-j=4", // Number of parallel workers
+    "--query-driver=/usr/bin/g++,/usr/local/cuda/bin/nvcc" // Allow Clangd to query these compilers
   ],
+  // 3. Treat .cu/.cuh files as CUDA-C++ for proper syntax highlighting.
+  "files.associations": {
+    "*.cu": "cuda-cpp",
+    "*.cuh": "cuda-cpp"
+  },
+  // 4. Use Clangd as the default formatter for C++ and CUDA files.
+  "[cpp]": {
+    "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+  },
+  "[cuda-cpp]": {
+    "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+  },
   // ==================================================
   // Global Settings
   // ==================================================

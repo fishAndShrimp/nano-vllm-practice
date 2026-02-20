@@ -23,6 +23,7 @@ bin/
 *.so
 *.a
 *.exe
+compile_flags.txt
 
 # ==============================
 # Python & Environment
