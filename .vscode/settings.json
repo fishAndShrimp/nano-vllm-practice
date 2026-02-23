@@ -11,6 +11,13 @@
     }
   },
   // ==================================================
+  // Jupyter Notebook Configuration
+  // ==================================================
+  "notebook.formatOnSave.enabled": true,
+  "notebook.codeActionsOnSave": {
+    "source.organizeImports": "explicit"
+  },
+  // ==================================================
   // Clangd Configuration (Replaces MS C/C++)
   // ==================================================
   // 1. Disable Microsoft IntelliSense to prevent conflicts with Clangd.
