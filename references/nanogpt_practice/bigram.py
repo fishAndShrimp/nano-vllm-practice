@@ -7,7 +7,7 @@ batch_size = 32
 block_size = 8
 max_iters = 3000
 eval_interval = 300
-learning_rate = 1e-2
+learning_rate = 1e-3
 device = "cuda" if torch.cuda.is_available() else "cpu"
 eval_iters = 200
 # -----
@@ -48,9 +48,14 @@ val_data = data[n:]
 # data loading
 def get_batch(split):
     data = train_data if split == "train" else val_data
+
     ix = torch.randint(len(data) - block_size, (batch_size,))
     x = torch.stack([data[i : i + block_size] for i in ix])
     y = torch.stack([data[i + 1 : i + 1 + block_size] for i in ix])
+
+    x = x.to(device)
+    y = y.to(device)
+
     return x, y
 
 
@@ -60,12 +65,12 @@ def estimate_loss():
     out = {}
     model.eval()
 
-    for split in ["train", "test"]:
+    for split in ["train", "val"]:
         losses = torch.zeros(eval_iters)
 
         for k in range(eval_iters):
             X, Y = get_batch(split)
-            logits, loss = model(X, Y)
+            _, loss = model(X, Y)
             losses[k] = loss.item()
 
         out[split] = losses.mean()
@@ -123,14 +128,14 @@ class BigramLanguageModel(nn.Module):
         return idx
 
 
-model = BigramLanguageModel(vocab_size)
-m = model.to(device)
+model = BigramLanguageModel(vocab_size).to(device)
+# m = model.to(device)
 
 
 # optim
 optimizer = torch.optim.AdamW(
-    m.parameters(),
-    lr=1e-3,
+    model.parameters(),
+    lr=learning_rate,
 )
 
 
@@ -139,12 +144,12 @@ for iter in range(max_iters):
     if iter % eval_interval == 0:
         losses = estimate_loss()
         print(
-            f"step {iter}: train loss {losses['trian']:.4f}val loss {losses['val']:.4f}"
+            f"step {iter}: train loss {losses['train']:.4f} val loss {losses['val']:.4f}"
         )
 
     xb, yb = get_batch("train")
 
-    logits, loss = m(xb, yb)
+    logits, loss = model(xb, yb)
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
@@ -157,7 +162,7 @@ context = torch.zeros(
 )
 print(
     decode(
-        m.generate(
+        model.generate(
             context,
             max_new_tokens=500,
         )[0].tolist()
