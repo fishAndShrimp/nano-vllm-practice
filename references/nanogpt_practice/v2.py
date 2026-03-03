@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
@@ -5,8 +7,8 @@ from torch.nn import functional as F
 # hyperparameters
 batch_size = 32
 block_size = 8
-max_iters = 3000
-eval_interval = 300
+max_iters = 5000
+eval_interval = 500
 learning_rate = 1e-3
 device = "cuda" if torch.cuda.is_available() else "cpu"
 eval_iters = 200
@@ -81,6 +83,47 @@ def estimate_loss():
     return out
 
 
+class SingleHead(nn.Module):
+    """one head self-attention"""
+
+    def __init__(self, d_head):
+        super().__init__()
+        self.d_head = d_head
+
+        self.w_q = nn.Linear(n_embd, d_head, bias=False)
+        self.w_k = nn.Linear(n_embd, d_head, bias=False)
+        self.w_v = nn.Linear(n_embd, d_head, bias=False)
+
+        self.register_buffer(
+            "tril",
+            torch.tril(
+                torch.ones(
+                    block_size,
+                    block_size,
+                )
+            ),
+        )
+
+    def forward(self, x: torch.Tensor):
+        """ """
+        B, T, C = x.shape
+
+        q = self.w_q(x)
+        k = self.w_k(x)
+        v = self.w_v(x)
+
+        scores = (q @ k.transpose(-2, -1)) / math.sqrt(self.d_head)
+        scores = scores.masked_fill(
+            self.tril[:T, :T] == 0,
+            float("-inf"),
+        )
+        wei = F.softmax(scores, dim=-1)
+
+        out = wei @ v
+
+        return out
+
+
 # bigram model
 class BigramLanguageModel(nn.Module):
     def __init__(self):
@@ -90,6 +133,9 @@ class BigramLanguageModel(nn.Module):
             n_embd,
         )
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
+
+        self.single_head = SingleHead(n_embd)
+
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
     def forward(self, idx, targets=None):
@@ -101,14 +147,14 @@ class BigramLanguageModel(nn.Module):
 
         # pos_emb: (T,C)
         pos_emb = self.position_embedding_table(
-            torch.arange(
-                block_size,
-                device=device,
-            )
+            torch.arange(T, device=device),
         )
 
         # x: (B,T,C)
         x = tok_emb + pos_emb
+
+        # single head attention
+        x = self.single_head(x)
 
         # logits: (B,T,vocab_size)
         logits = self.lm_head(x)
@@ -129,8 +175,11 @@ class BigramLanguageModel(nn.Module):
         # (B,T)
 
         for _ in range(max_new_tokens):
+            # crop idx to the last block_size tokens
+            idx_cond = idx[:, -block_size:]
+
             # logits -> scores (B,T,C)
-            logits, _ = self(idx)
+            logits, _ = self(idx_cond)
 
             # pick last, become (B,C)
             logits = logits[:, -1, :]
