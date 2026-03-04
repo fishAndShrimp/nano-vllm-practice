@@ -15,6 +15,8 @@ eval_iters = 200
 # v2 -----
 n_embd = 32
 dropout = 0.1
+n_layers = 3
+n_heads = 4
 # -----
 
 torch.manual_seed(1337)
@@ -105,6 +107,8 @@ class SingleHead(nn.Module):
             ),
         )
 
+        self.dropout = nn.Dropout(dropout)
+
     def forward(self, x: torch.Tensor):
         """ """
         B, T, C = x.shape
@@ -119,6 +123,8 @@ class SingleHead(nn.Module):
             float("-inf"),
         )
         wei = F.softmax(scores, dim=-1)
+
+        wei = self.dropout(wei)
 
         out = wei @ v
 
@@ -140,6 +146,7 @@ class MultiHead(nn.Module):
 
         n_embd = n_heads * d_head
         self.proj = nn.Linear(n_embd, n_embd, bias=False)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         out = torch.cat(
@@ -147,6 +154,7 @@ class MultiHead(nn.Module):
             dim=-1,
         )
         out = self.proj(out)
+        out = self.dropout(out)
         return out
 
 
@@ -160,6 +168,7 @@ class FeedForward(nn.Module):
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(4 * n_embd, n_embd, bias=False),
+            nn.Dropout(dropout),
         )
 
     def forward(self, x):
@@ -204,11 +213,16 @@ class BigramLanguageModel(nn.Module):
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
 
         self.blocks = nn.Sequential(
-            Block(n_embd, n_heads=4),
-            Block(n_embd, n_heads=4),
-            Block(n_embd, n_heads=4),
-            nn.LayerNorm(n_embd),
+            *[
+                Block(
+                    n_embd,
+                    n_heads=n_heads,
+                )
+                for _ in range(n_layers)
+            ]
         )
+
+        self.ln_f = nn.LayerNorm(n_embd)
 
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
@@ -229,6 +243,7 @@ class BigramLanguageModel(nn.Module):
 
         # (B,T,C) => (B,T,C)
         x = self.blocks(x)
+        x = self.ln_f(x)
 
         # logits: (B,T,vocab_size)
         logits = self.lm_head(x)
