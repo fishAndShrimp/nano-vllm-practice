@@ -14,6 +14,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 eval_iters = 200
 # v2 -----
 n_embd = 32
+dropout = 0.1
 # -----
 
 torch.manual_seed(1337)
@@ -137,11 +138,16 @@ class MultiHead(nn.Module):
             ]
         )
 
+        n_embd = n_heads * d_head
+        self.proj = nn.Linear(n_embd, n_embd, bias=False)
+
     def forward(self, x):
-        return torch.cat(
+        out = torch.cat(
             [h(x) for h in self.heads],
             dim=-1,
         )
+        out = self.proj(out)
+        return out
 
 
 class FeedForward(nn.Module):
@@ -150,13 +156,38 @@ class FeedForward(nn.Module):
     def __init__(self, n_embd):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(n_embd, n_embd),
+            nn.Linear(n_embd, 4 * n_embd, bias=False),
             nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(4 * n_embd, n_embd, bias=False),
         )
 
     def forward(self, x):
         """ """
         return self.net(x)
+
+
+class Block(nn.Module):
+    """
+    Transformer decoder layer
+
+    - communication => attention
+    - computation => FFN
+    """
+
+    def __init__(self, n_embd, n_heads):
+        super().__init__()
+
+        assert n_embd % n_heads == 0
+        d_head = n_embd // n_heads
+
+        self.sa = MultiHead(n_heads, d_head)
+        self.ffn = FeedForward(n_embd)
+
+    def forward(self, x):
+        x = x + self.sa(x)
+        x = x + self.ffn(x)
+        return x
 
 
 # bigram model
@@ -169,14 +200,11 @@ class BigramLanguageModel(nn.Module):
         )
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
 
-        # self.self_attention = SingleHead(n_embd)
-        self.self_attention = MultiHead(
-            4,
-            n_embd // 4,
+        self.blocks = nn.Sequential(
+            Block(n_embd, n_heads=4),
+            Block(n_embd, n_heads=4),
+            Block(n_embd, n_heads=4),
         )
-
-        # FFN
-        self.ffn = FeedForward(n_embd)
 
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
@@ -195,11 +223,8 @@ class BigramLanguageModel(nn.Module):
         # x: (B,T,C)
         x = tok_emb + pos_emb
 
-        # single/multi head attention
-        x = self.self_attention(x)
-
-        # ffn
-        x = self.ffn(x)
+        # (B,T,C) => (B,T,C)
+        x = self.blocks(x)
 
         # logits: (B,T,vocab_size)
         logits = self.lm_head(x)
