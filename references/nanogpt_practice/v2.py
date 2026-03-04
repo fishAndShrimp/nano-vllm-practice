@@ -144,6 +144,21 @@ class MultiHead(nn.Module):
         )
 
 
+class FeedForward(nn.Module):
+    """ """
+
+    def __init__(self, n_embd):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embd, n_embd),
+            nn.ReLU(),
+        )
+
+    def forward(self, x):
+        """ """
+        return self.net(x)
+
+
 # bigram model
 class BigramLanguageModel(nn.Module):
     def __init__(self):
@@ -159,6 +174,9 @@ class BigramLanguageModel(nn.Module):
             4,
             n_embd // 4,
         )
+
+        # FFN
+        self.ffn = FeedForward(n_embd)
 
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
@@ -179,6 +197,9 @@ class BigramLanguageModel(nn.Module):
 
         # single/multi head attention
         x = self.self_attention(x)
+
+        # ffn
+        x = self.ffn(x)
 
         # logits: (B,T,vocab_size)
         logits = self.lm_head(x)
