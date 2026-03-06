@@ -4,9 +4,10 @@
 
 template <typename scalar_t>
 __global__ void VecAddKernel(
-
-    const scalar_t* a, const scalar_t* b, scalar_t* c, int size
-
+    const scalar_t* __restrict__ a,
+    const scalar_t* __restrict__ b,
+    scalar_t* __restrict__ c,
+    int size
 ) {
     int gx = blockDim.x * blockIdx.x + threadIdx.x;
     if (gx < size) {
@@ -14,10 +15,30 @@ __global__ void VecAddKernel(
     }
 }
 
-torch::Tensor VecAddCuda(
+torch::Tensor VecAddCuda(torch::Tensor a, torch::Tensor b) {
+    torch::Tensor c = torch::empty_like(a);
 
-    torch::Tensor a, torch::Tensor b
+    int size = a.numel();
 
-) {
-    return a + b;
+    int threads = 1024;
+    int blocks = (size + threads - 1) / threads;
+
+    AT_DISPATCH_FLOATING_TYPES(
+        a.scalar_type(),
+        "VecAddCuda",
+        ([&] {
+            VecAddKernel<scalar_t><<<blocks, threads>>>(
+                a.data_ptr<scalar_t>(),
+                b.data_ptr<scalar_t>(),
+                c.data_ptr<scalar_t>(),
+                size
+            );
+        })
+    );
+
+    return c;
+}
+
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("VecAddCuda", &VecAddCuda);
 }
