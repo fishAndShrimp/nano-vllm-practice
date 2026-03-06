@@ -1,10 +1,26 @@
+import multiprocessing
 import os
 
+import torch
 from setuptools import find_packages, setup
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 
 # Get the absolute path of the current directory to locate source files
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+num_jobs = max(1, multiprocessing.cpu_count() - 1)
+os.environ["MAX_JOBS"] = str(num_jobs)
+
+
+if not os.environ.get("TORCH_CUDA_ARCH_LIST"):
+    if torch.cuda.is_available():
+        major, minor = torch.cuda.get_device_capability()
+        os.environ["TORCH_CUDA_ARCH_LIST"] = f"{major}.{minor}"
+
+
+abi_version = 1 if torch._C._GLIBCXX_USE_CXX11_ABI else 0
+
 
 setup(
     name="femtovllm",
@@ -20,8 +36,16 @@ setup(
                 # Future kernels (e.g., gemm.cu) will be added here
             ],
             extra_compile_args={
-                "cxx": ["-O3"],
-                "nvcc": ["-O3"],
+                "cxx": [
+                    "-O3",
+                    # f"-D_GLIBCXX_USE_CXX11_ABI={abi_version}",
+                    # f"-Xcompiler=-D_GLIBCXX_USE_CXX11_ABI={abi_version}",
+                ],
+                "nvcc": [
+                    "-O3",
+                    # f"-D_GLIBCXX_USE_CXX11_ABI={abi_version}",
+                    # f"-Xcompiler=-D_GLIBCXX_USE_CXX11_ABI={abi_version}",
+                ],
             },
         ),
     ],
