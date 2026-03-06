@@ -54,7 +54,7 @@ def vec_add(
         raise ValueError(f"Shape mismatch: a={a.shape}, b={b.shape}")
 
     if impl == "cuda":
-        return _cuda_backend.vec_add(a, b)
+        return _cuda_backend.VecAddCuda(a, b)
     elif impl == "triton":
         raise NotImplementedError("Triton backend is not implemented yet.")
     else:
