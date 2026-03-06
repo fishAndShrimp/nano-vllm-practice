@@ -53,3 +53,8 @@ references/nanogpt_practice/*.txt
 # OS Files
 # ==============================
 .DS_Store
+
+# ==============================
+# Local Practice & Temp Files
+# ==============================
+_TEMPPRAC_*
