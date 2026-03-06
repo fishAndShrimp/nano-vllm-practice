@@ -19,13 +19,13 @@ ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 num_jobs = max(1, multiprocessing.cpu_count() - 1)
 os.environ["MAX_JOBS"] = str(num_jobs)
 
-# # 2. Target GPU Architecture
-# # If not explicitly set, target the architecture of the current GPU to save compile time.
-# # If no GPU is present, PyTorch will fallback to compiling for all supported architectures.
-# if not os.environ.get("TORCH_CUDA_ARCH_LIST"):
-#     if torch.cuda.is_available():
-#         major, minor = torch.cuda.get_device_capability()
-#         os.environ["TORCH_CUDA_ARCH_LIST"] = f"{major}.{minor}"
+# 2. Target GPU Architecture
+# If not explicitly set, target the architecture of the current GPU to save compile time.
+# If no GPU is present, PyTorch will fallback to compiling for all supported architectures.
+if os.environ.get("FAST_BUILD") == "1" and not os.environ.get("TORCH_CUDA_ARCH_LIST"):
+    if torch.cuda.is_available():
+        major, minor = torch.cuda.get_device_capability()
+        os.environ["TORCH_CUDA_ARCH_LIST"] = f"{major}.{minor}"
 
 # 3. C++11 ABI Compatibility
 # Detect the ABI version used by the current PyTorch installation.

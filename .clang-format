@@ -7,7 +7,7 @@ IndentWidth: 4
 TabWidth: 4
 
 # Line Length: Prevent aggressive wrapping
-ColumnLimit: 100
+ColumnLimit: 60
 
 # Includes: Sort headers automatically (System -> 3rd Party -> Local)
 SortIncludes: true
@@ -15,3 +15,11 @@ IncludeBlocks: Preserve
 
 # CUDA: Treat .cu files as standard C++
 Standard: Auto
+
+# Force one parameter/argument per line (Python Black style).
+# Note: Add a trailing '//' after the open bracket to trigger this behavior.
+AlignAfterOpenBracket: BlockIndent
+BinPackParameters: false
+BinPackArguments: false
+AllowAllParametersOfDeclarationOnNextLine: false
+AllowAllArgumentsOnNextLine: false

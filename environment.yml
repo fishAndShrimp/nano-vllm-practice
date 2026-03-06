@@ -1,32 +1,40 @@
 name: nanovllm
 channels:
+  - conda-forge
   - nvidia
   - defaults
 dependencies:
   - python=3.10
-
   - jupyter
   - ipykernel
 
-  # CUDA Compiler & Build Tools (Required for custom kernels)
-  - cuda-nvcc
-  - cuda-cudart
+  - gcc_linux-64=12
+  - gxx_linux-64=12
+
+  # Pin CUDA toolkit to match PyTorch's CUDA version
+  - conda-forge::cuda-version=12.1
+  - nvidia::cuda-toolkit=12.1.1
+  - nvidia::cuda-nvcc=12.1.105
+  - nvidia::cuda-cudart=12.1.105
+
+  # Build tools for custom CUDA extensions
   - ninja
   - packaging
   - setuptools
   - wheel
 
-  # Scientific basics
+  # Core dependencies
   - numpy
   - safetensors
 
   - pip
   - pip:
-      # PyTorch with CUDA 12.1 (Stable choice for LLM/FlashAttention)
       - --extra-index-url https://download.pytorch.org/whl/cu121
-      - torch
-      - torchvision
-      - torchaudio
+
+      # Pin PyTorch ecosystem to prevent dependency drift
+      - torch==2.5.1
+      - torchvision==0.20.1
+      - torchaudio==2.5.1
 
       # Utilities
       - triton
