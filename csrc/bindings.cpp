@@ -14,6 +14,7 @@ torch::Tensor PrefixSumCuda(torch::Tensor a);
 
 torch::Tensor SafeSoftmaxCuda(torch::Tensor a);
 torch::Tensor OnlineSoftmaxCuda(torch::Tensor a);
+torch::Tensor BatchedOnlineSoftmaxCuda(torch::Tensor a);
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("VecAddCuda", &VecAddCuda)
@@ -23,5 +24,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def("PrefixSumCuda", &PrefixSumCuda)
         .def("SafeSoftmaxCuda", &SafeSoftmaxCuda)
         .def("OnlineSoftmaxCuda", &OnlineSoftmaxCuda)
+        .def(
+            "BatchedOnlineSoftmaxCuda",
+            &BatchedOnlineSoftmaxCuda
+        )
         .def("VecAddRaw", &VecAddRaw);
 }

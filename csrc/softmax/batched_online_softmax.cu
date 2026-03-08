@@ -7,11 +7,18 @@
 constexpr int kBlockSize = 256;
 
 template <typename scalar_t>
-__global__ void OnlineSoftmaxKernel(
-    const scalar_t* __restrict__ a,
-    scalar_t* __restrict__ b,
-    int size
+__global__ void BatchedOnlineSoftmaxKernel(
+    const scalar_t* __restrict__ batched_a,
+    scalar_t* __restrict__ batched_b,
+    int size,
+    int batches
 ) {
+    if (blockIdx.x >= batches) {
+        return;
+    }
+    const scalar_t* a = batched_a + blockIdx.x * size;
+    scalar_t* b = batched_b + blockIdx.x * size;
+
     __shared__ scalar_t sdata[kBlockSize];
 
     int lx = threadIdx.x;
@@ -78,25 +85,29 @@ __global__ void OnlineSoftmaxKernel(
     }
 }
 
-torch::Tensor OnlineSoftmaxCuda(torch::Tensor a) {
+torch::Tensor BatchedOnlineSoftmaxCuda(torch::Tensor a) {
     TORCH_CHECK_EQ(a.is_cuda(), true);
     TORCH_CHECK_EQ(a.is_contiguous(), true);
 
     auto b = torch::empty_like(a);
 
+    int size = a.size(-1);
+    int batches = a.numel() / size;
+
     AT_DISPATCH_FLOATING_TYPES_AND2(
         at::ScalarType::Half,
         at::ScalarType::BFloat16,
         a.scalar_type(),
-        "OnlineSoftmaxCuda",
+        "BatchedOnlineSoftmaxCuda",
         ([&] {
-            OnlineSoftmaxKernel<scalar_t><<<
+            BatchedOnlineSoftmaxKernel<scalar_t><<<
                 //
-                1,
+                batches,
                 kBlockSize>>>(
                 a.data_ptr<scalar_t>(),
                 b.data_ptr<scalar_t>(),
-                a.numel()
+                size,
+                batches
             );
             CUDA_CHECK(cudaGetLastError());
         })
