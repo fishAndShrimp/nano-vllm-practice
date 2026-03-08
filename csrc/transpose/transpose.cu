@@ -4,7 +4,7 @@
 
 #include "../utils/cuda_check.cuh"
 
-constexpr int kTileDim = 32;
+constexpr int kTileDim = 16;
 
 template <typename scalar_t>
 __global__ void TransposeKernel(

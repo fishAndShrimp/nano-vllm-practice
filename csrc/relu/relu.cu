@@ -26,7 +26,7 @@ torch::Tensor ReluCuda(torch::Tensor a) {
     auto b = torch::empty_like(a);
 
     int size = a.numel();
-    int threads = 1024;
+    int threads = 256;
     int blocks = (size + threads - 1) / threads;
 
     AT_DISPATCH_FLOATING_TYPES_AND2(

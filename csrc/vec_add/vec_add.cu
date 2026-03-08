@@ -29,7 +29,7 @@ torch::Tensor VecAddCuda(torch::Tensor a, torch::Tensor b) {
 
     int size = a.numel();
 
-    int threads = 1024;
+    int threads = 256;
     int blocks = (size + threads - 1) / threads;
 
     AT_DISPATCH_FLOATING_TYPES_AND2(
@@ -87,7 +87,7 @@ VecAddRaw(torch::Tensor a_cpu, torch::Tensor b_cpu) {
         cudaMemcpyDefault
     ));
 
-    int threads = 1024;
+    int threads = 256;
     int blocks = (size + threads - 1) / threads;
 
     VecAddKernel<<<blocks, threads>>>(a_d, b_d, c_d, size);
