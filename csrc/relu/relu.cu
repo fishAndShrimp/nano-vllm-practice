@@ -35,7 +35,7 @@ torch::Tensor ReluCuda(torch::Tensor a) {
         a.scalar_type(),
         "ReluCuda",
         ([&] {
-            ReluKernel<<<blocks, threads>>>(
+            ReluKernel<scalar_t><<<blocks, threads>>>(
                 a.data_ptr<scalar_t>(),
                 b.data_ptr<scalar_t>(),
                 size

@@ -6,8 +6,11 @@ VecAddRaw(torch::Tensor a_cpu, torch::Tensor b_cpu);
 
 torch::Tensor ReluCuda(torch::Tensor a);
 
+torch::Tensor TransposeCuda(torch::Tensor a);
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("VecAddCuda", &VecAddCuda)
-        .def("VecAddRaw", &VecAddRaw)
-        .def("ReluCuda", &ReluCuda);
+        .def("ReluCuda", &ReluCuda)
+        .def("TransposeCuda", &TransposeCuda)
+        .def("VecAddRaw", &VecAddRaw);
 }

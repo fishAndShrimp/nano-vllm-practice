@@ -38,7 +38,7 @@ torch::Tensor VecAddCuda(torch::Tensor a, torch::Tensor b) {
         a.scalar_type(),
         "VecAddCuda",
         ([&] {
-            VecAddKernel<<<blocks, threads>>>(
+            VecAddKernel<scalar_t><<<blocks, threads>>>(
                 a.data_ptr<scalar_t>(),
                 b.data_ptr<scalar_t>(),
                 c.data_ptr<scalar_t>(),

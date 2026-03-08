@@ -48,6 +48,7 @@ setup(
                 os.path.join(ROOT_DIR, "csrc", "bindings.cpp"),
                 os.path.join(ROOT_DIR, "csrc", "vec_add", "vec_add.cu"),
                 os.path.join(ROOT_DIR, "csrc", "relu", "relu.cu"),
+                os.path.join(ROOT_DIR, "csrc", "transpose", "transpose.cu"),
                 # Future kernels (e.g., gemm.cu) will be added here
             ],
             extra_compile_args={
