@@ -2,6 +2,8 @@
 #include <cuda_runtime.h>
 #include <torch/extension.h>
 
+#include "../utils/cuda_check.cuh"
+
 template <typename scalar_t>
 __global__ void VecAddKernel(
     const scalar_t* __restrict__ a,
@@ -12,6 +14,7 @@ __global__ void VecAddKernel(
     int gx = blockDim.x * blockIdx.x + threadIdx.x;
     if (gx < size) {
         c[gx] = a[gx] + b[gx];
+        // printf("c:%f a:%f b:%f", c[gx], a[gx], b[gx]);
     }
 }
 
@@ -39,6 +42,62 @@ torch::Tensor VecAddCuda(torch::Tensor a, torch::Tensor b) {
     return c;
 }
 
+torch::Tensor
+VecAddRaw(torch::Tensor a_cpu, torch::Tensor b_cpu) {
+    TORCH_CHECK_EQ(a_cpu.is_cpu(), true);
+    TORCH_CHECK_EQ(b_cpu.is_cpu(), true);
+    TORCH_CHECK_EQ(a_cpu.is_contiguous(), true);
+    TORCH_CHECK_EQ(b_cpu.is_contiguous(), true);
+    TORCH_CHECK_EQ(a_cpu.numel(), b_cpu.numel());
+
+    int size = a_cpu.numel();
+    int volume = size * sizeof(float);
+    auto c_cpu = torch::empty_like(a_cpu);
+
+    float* a_d = nullptr;
+    float* b_d = nullptr;
+    float* c_d = nullptr;
+
+    CUDA_CHECK(cudaMalloc((void**)&a_d, volume));
+    CUDA_CHECK(cudaMalloc((void**)&b_d, volume));
+    CUDA_CHECK(cudaMalloc((void**)&c_d, volume));
+
+    CUDA_CHECK(cudaMemcpy(
+        a_d,
+        a_cpu.data_ptr<float>(),
+        volume,
+        cudaMemcpyDefault
+    ));
+    CUDA_CHECK(cudaMemcpy(
+        b_d,
+        b_cpu.data_ptr<float>(),
+        volume,
+        cudaMemcpyDefault
+    ));
+
+    int threads = 1024;
+    int blocks = (size + threads - 1) / threads;
+
+    VecAddKernel<<<blocks, threads>>>(a_d, b_d, c_d, size);
+    CUDA_CHECK(cudaGetLastError());
+
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    CUDA_CHECK(cudaMemcpy(
+        c_cpu.data_ptr<float>(),
+        c_d,
+        volume,
+        cudaMemcpyDefault
+    ));
+
+    CUDA_CHECK(cudaFree(a_d));
+    CUDA_CHECK(cudaFree(b_d));
+    CUDA_CHECK(cudaFree(c_d));
+
+    return c_cpu;
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("VecAddCuda", &VecAddCuda);
+    m.def("VecAddRaw", &VecAddRaw);
 }
