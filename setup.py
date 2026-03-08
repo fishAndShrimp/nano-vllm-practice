@@ -17,7 +17,12 @@ ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Dynamically set MAX_JOBS to utilize all available CPU cores (leaving 1 for the OS)
 # This significantly speeds up the build process.
 num_jobs = max(1, multiprocessing.cpu_count() - 1)
-num_jobs = min(6, num_jobs)
+
+# Cap MAX_JOBS to 4 to prevent Out-Of-Memory (OOM) errors and severe OS swapping.
+# Compiling PyTorch/CUDA C++ templates is highly memory-intensive,
+# often consuming ~2.5GB of RAM per 'nvcc' process.
+num_jobs = min(4, num_jobs)
+
 os.environ["MAX_JOBS"] = str(num_jobs)
 
 # 2. Target GPU Architecture
