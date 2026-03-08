@@ -17,6 +17,7 @@ ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Dynamically set MAX_JOBS to utilize all available CPU cores (leaving 1 for the OS)
 # This significantly speeds up the build process.
 num_jobs = max(1, multiprocessing.cpu_count() - 1)
+num_jobs = min(6, num_jobs)
 os.environ["MAX_JOBS"] = str(num_jobs)
 
 # 2. Target GPU Architecture
@@ -52,6 +53,7 @@ setup(
                 os.path.join(ROOT_DIR, "csrc", "reduce", "reduce.cu"),
                 os.path.join(ROOT_DIR, "csrc", "prefix_sum", "prefix_sum.cu"),
                 os.path.join(ROOT_DIR, "csrc", "softmax", "safe_softmax.cu"),
+                os.path.join(ROOT_DIR, "csrc", "softmax", "online_softmax.cu"),
                 # Future kernels (e.g., gemm.cu) will be added here
             ],
             extra_compile_args={

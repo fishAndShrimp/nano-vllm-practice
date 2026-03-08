@@ -58,7 +58,7 @@ __global__ void SafeSoftmaxKernel(
         }
         __syncthreads();
     }
-    sum += sdata[0];
+    sum = sdata[0];
     __syncthreads();
 
     for (int phase = 0; blockDim.x * phase < size;
