@@ -45,7 +45,9 @@ setup(
             # The binary will be compiled as a submodule: femtovllm._C
             name="femtovllm._C",
             sources=[
+                os.path.join(ROOT_DIR, "csrc", "bindings.cpp"),
                 os.path.join(ROOT_DIR, "csrc", "vec_add", "vec_add.cu"),
+                os.path.join(ROOT_DIR, "csrc", "relu", "relu.cu"),
                 # Future kernels (e.g., gemm.cu) will be added here
             ],
             extra_compile_args={

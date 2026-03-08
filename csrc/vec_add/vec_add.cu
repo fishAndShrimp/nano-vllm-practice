@@ -19,6 +19,12 @@ __global__ void VecAddKernel(
 }
 
 torch::Tensor VecAddCuda(torch::Tensor a, torch::Tensor b) {
+    TORCH_CHECK_EQ(a.is_cuda(), true);
+    TORCH_CHECK_EQ(b.is_cuda(), true);
+    TORCH_CHECK_EQ(a.is_contiguous(), true);
+    TORCH_CHECK_EQ(b.is_contiguous(), true);
+    TORCH_CHECK_EQ(a.numel(), b.numel());
+
     torch::Tensor c = torch::empty_like(a);
 
     int size = a.numel();
@@ -26,16 +32,20 @@ torch::Tensor VecAddCuda(torch::Tensor a, torch::Tensor b) {
     int threads = 1024;
     int blocks = (size + threads - 1) / threads;
 
-    AT_DISPATCH_FLOATING_TYPES(
+    AT_DISPATCH_FLOATING_TYPES_AND2(
+        at::ScalarType::Half,
+        at::ScalarType::BFloat16,
         a.scalar_type(),
         "VecAddCuda",
         ([&] {
-            VecAddKernel<scalar_t><<<blocks, threads>>>(
+            VecAddKernel<<<blocks, threads>>>(
                 a.data_ptr<scalar_t>(),
                 b.data_ptr<scalar_t>(),
                 c.data_ptr<scalar_t>(),
                 size
             );
+
+            CUDA_CHECK(cudaGetLastError());
         })
     );
 
@@ -49,6 +59,8 @@ VecAddRaw(torch::Tensor a_cpu, torch::Tensor b_cpu) {
     TORCH_CHECK_EQ(a_cpu.is_contiguous(), true);
     TORCH_CHECK_EQ(b_cpu.is_contiguous(), true);
     TORCH_CHECK_EQ(a_cpu.numel(), b_cpu.numel());
+    TORCH_CHECK_EQ(a_cpu.scalar_type(), torch::kFloat32);
+    TORCH_CHECK_EQ(b_cpu.scalar_type(), torch::kFloat32);
 
     int size = a_cpu.numel();
     int volume = size * sizeof(float);
@@ -95,9 +107,4 @@ VecAddRaw(torch::Tensor a_cpu, torch::Tensor b_cpu) {
     CUDA_CHECK(cudaFree(c_d));
 
     return c_cpu;
-}
-
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("VecAddCuda", &VecAddCuda);
-    m.def("VecAddRaw", &VecAddRaw);
 }
