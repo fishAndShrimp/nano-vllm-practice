@@ -62,3 +62,33 @@ for (int offset = 1; offset < blockDim.x; offset *= 2) {
 ```
 
 ---
+
+## independent m, independent sum, no if(lx == 0)
+
+```cpp
+scalar_t m = static_cast<scalar_t>(-INFINITY);
+for (int phase = 0; blockDim.x * phase < size;
+        phase++) {
+    int gx = blockDim.x * phase + lx;
+    sdata[lx] = (gx < size)
+                    ? a[gx]
+                    : static_cast<scalar_t>(-INFINITY);
+    __syncthreads();
+
+    for (int offset = blockDim.x / 2; offset > 0;
+            offset /= 2) {
+        if (lx < offset) {
+            sdata[lx] =
+                max(sdata[lx], sdata[lx + offset]);
+        }
+        __syncthreads();
+    }
+
+    m = max(m, sdata[0]);
+    __syncthreads();
+}
+```
+
+---
+
+
