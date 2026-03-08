@@ -50,6 +50,7 @@ setup(
                 os.path.join(ROOT_DIR, "csrc", "relu", "relu.cu"),
                 os.path.join(ROOT_DIR, "csrc", "transpose", "transpose.cu"),
                 os.path.join(ROOT_DIR, "csrc", "reduce", "reduce.cu"),
+                os.path.join(ROOT_DIR, "csrc", "prefix_sum", "prefix_sum.cu"),
                 # Future kernels (e.g., gemm.cu) will be added here
             ],
             extra_compile_args={

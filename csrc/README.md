@@ -47,3 +47,18 @@ while (offset > 0) {
 ```
 
 ---
+
+## ax bx mapping from lx
+
+```cpp
+for (int offset = 1; offset < blockDim.x; offset *= 2) {
+    int ax = (2 * offset) * (lx + 1) - offset - 1;
+    int bx = (2 * offset) * (lx + 1) - 1;
+    if (bx < blockDim.x) {
+        sdata[bx] += sdata[ax];
+    }
+    __syncthreads();
+}
+```
+
+---
