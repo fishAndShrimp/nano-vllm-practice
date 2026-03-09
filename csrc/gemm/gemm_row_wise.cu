@@ -11,9 +11,9 @@ __global__ void GemmRowWiseKernel(
     const scalar_t* __restrict__ a,
     const scalar_t* __restrict__ b,
     scalar_t* __restrict__ c,
-    int dim_n,
     int dim_m,
-    int dim_p
+    int dim_k,
+    int dim_n
 ) {
     scalar_t a_tile[kTileSize];
     __shared__ scalar_t b_tile[kTileSize][kTileSize + 1];
@@ -21,7 +21,7 @@ __global__ void GemmRowWiseKernel(
     auto ly = threadIdx.x;
     auto gy = blockDim.x * blockIdx.x + ly;
 
-    for (int tile_idx = 0; kTileSize * tile_idx < dim_p;
+    for (int tile_idx = 0; kTileSize * tile_idx < dim_n;
          tile_idx++) {
         float pvalues[kTileSize];
 
@@ -30,14 +30,14 @@ __global__ void GemmRowWiseKernel(
             pvalues[lx] = 0.0;
         }
 
-        for (int phase = 0; kTileSize * phase < dim_m;
+        for (int phase = 0; kTileSize * phase < dim_k;
              phase++) {
 #pragma unroll
             for (int lx = 0; lx < kTileSize; lx++) {
-                if ((gy) < dim_n &&
-                    (kTileSize * phase + lx) < dim_m) {
+                if ((gy) < dim_m &&
+                    (kTileSize * phase + lx) < dim_k) {
                     a_tile[lx] =
-                        a[(gy)*dim_m +
+                        a[(gy)*dim_k +
                           (kTileSize * phase + lx)];
                 } else {
                     a_tile[lx] = static_cast<scalar_t>(0);
@@ -46,11 +46,11 @@ __global__ void GemmRowWiseKernel(
 
             for (int row = 0; row < kTileSize; row++) {
                 auto col = threadIdx.x;
-                if ((kTileSize * phase + row) < dim_m &&
-                    (kTileSize * tile_idx + col) < dim_p) {
+                if ((kTileSize * phase + row) < dim_k &&
+                    (kTileSize * tile_idx + col) < dim_n) {
                     b_tile[row][col] =
                         b[(kTileSize * phase + row) *
-                              dim_p +
+                              dim_n +
                           (kTileSize * tile_idx + col)];
                 } else {
                     b_tile[row][col] =
@@ -98,8 +98,8 @@ __global__ void GemmRowWiseKernel(
 #pragma unroll
         for (int lx = 0; lx < kTileSize; lx++) {
             auto gx = kTileSize * tile_idx + lx;
-            if (gy < dim_n && gx < dim_p) {
-                c[(gy)*dim_p + (gx)] =
+            if (gy < dim_m && gx < dim_n) {
+                c[(gy)*dim_n + (gx)] =
                     static_cast<scalar_t>(pvalues[lx]);
             }
         }
@@ -117,17 +117,17 @@ GemmRowWiseCuda(torch::Tensor a, torch::Tensor b) {
     TORCH_CHECK_EQ(b.dim() >= 2, true);
     TORCH_CHECK_EQ(a.size(-1), b.size(-2));
 
-    int dim_n = a.size(-2);
-    int dim_m = a.size(-1);
-    int dim_p = b.size(-1);
+    int dim_m = a.size(-2);
+    int dim_k = a.size(-1);
+    int dim_n = b.size(-1);
     TORCH_CHECK_EQ(
-        a.numel() / dim_n / dim_m,
-        b.numel() / dim_m / dim_p
+        a.numel() / dim_m / dim_k,
+        b.numel() / dim_k / dim_n
     );
 
     auto c = torch::empty(
         //
-        {dim_n, dim_p},
+        {dim_m, dim_n},
         a.options()
     );
 
@@ -138,14 +138,14 @@ GemmRowWiseCuda(torch::Tensor a, torch::Tensor b) {
         "GemmRowWiseCuda",
         ([&] {
             GemmRowWiseKernel<scalar_t>
-                <<<(dim_n + kTileSize - 1) / kTileSize,
+                <<<(dim_m + kTileSize - 1) / kTileSize,
                    kTileSize>>>(
                     a.data_ptr<scalar_t>(),
                     b.data_ptr<scalar_t>(),
                     c.data_ptr<scalar_t>(),
-                    dim_n,
                     dim_m,
-                    dim_p
+                    dim_k,
+                    dim_n
                 );
             CUDA_CHECK(cudaGetLastError());
             cudaDeviceSynchronize();
