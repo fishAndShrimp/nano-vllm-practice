@@ -5,18 +5,25 @@
 #include "../utils/cuda_check.cuh"
 
 constexpr int kTileSize = 32;
+constexpr int kDimHead = 128;
 
 template <typename scalar_t>
 __global__ void FlashAttentionKernel(
-    const scalar_t* __restrict__ q,
-    const scalar_t* __restrict__ k_t,
-    const scalar_t* __restrict__ v,
-    scalar_t* __restrict__ out,
+    const scalar_t* __restrict__ q_batched,
+    const scalar_t* __restrict__ k_t_batched,
+    const scalar_t* __restrict__ v_batched,
+    scalar_t* __restrict__ out_batched,
     int dim_t,
     int dim_c
 ) {
-    scalar_t a_tile[kTileSize];
-    __shared__ scalar_t b_tile[kTileSize][kTileSize + 1];
+    int batch_idx = (blockIdx.z) * gridDim.y + (blockIdx.y);
+    auto q = q_batched + dim_t * dim_c * batch_idx;
+    auto k_t = k_t_batched + dim_t * dim_c * batch_idx;
+    auto v = v_batched + dim_t * dim_c * batch_idx;
+    auto out = out_batched + dim_t * dim_c * batch_idx;
+
+    scalar_t q_tile[kTileSize];
+    __shared__ scalar_t k_tile[kTileSize][kTileSize + 1];
 
     auto ly = threadIdx.x;
     auto gy = blockDim.x * blockIdx.x + ly;
@@ -36,11 +43,11 @@ __global__ void FlashAttentionKernel(
             for (int lx = 0; lx < kTileSize; lx++) {
                 if ((gy) < dim_t &&
                     (kTileSize * phase + lx) < dim_c) {
-                    a_tile[lx] =
+                    q_tile[lx] =
                         q[(gy)*dim_c +
                           (kTileSize * phase + lx)];
                 } else {
-                    a_tile[lx] = static_cast<scalar_t>(0);
+                    q_tile[lx] = static_cast<scalar_t>(0);
                 }
             }
 
@@ -48,12 +55,12 @@ __global__ void FlashAttentionKernel(
                 auto col = threadIdx.x;
                 if ((kTileSize * phase + row) < dim_c &&
                     (kTileSize * tile_idx + col) < dim_t) {
-                    b_tile[row][col] =
+                    k_tile[row][col] =
                         k_t[(kTileSize * phase + row) *
                                 dim_t +
                             (kTileSize * tile_idx + col)];
                 } else {
-                    b_tile[row][col] =
+                    k_tile[row][col] =
                         static_cast<scalar_t>(0);
                 }
             }
@@ -61,13 +68,13 @@ __global__ void FlashAttentionKernel(
 
 #pragma unroll
             for (int k = 0; k < kTileSize; k++) {
-                auto a_val = a_tile[k];
+                auto q_val = q_tile[k];
 
 #pragma unroll
                 for (int lx = 0; lx < kTileSize; lx++) {
                     pvalues[lx] +=
-                        static_cast<float>(a_val) *
-                        b_tile[k][lx];
+                        static_cast<float>(q_val) *
+                        k_tile[k][lx];
                 }
             }
             __syncthreads();
@@ -122,7 +129,11 @@ torch::Tensor FlashAttentionCuda(
         "FlashAttentionCuda",
         ([&] {
             FlashAttentionKernel<scalar_t>
-                <<<(dim_t + kTileSize - 1) / kTileSize,
+                <<<dim3(
+                       (dim_t + kTileSize - 1) / kTileSize,
+                       dim_h,
+                       dim_b
+                   ),
                    kTileSize>>>(
                     q.data_ptr<scalar_t>(),
                     k_t.data_ptr<scalar_t>(),
