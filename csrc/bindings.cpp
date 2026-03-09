@@ -16,6 +16,10 @@ torch::Tensor SafeSoftmaxCuda(torch::Tensor a);
 torch::Tensor OnlineSoftmaxCuda(torch::Tensor a);
 torch::Tensor BatchedOnlineSoftmaxCuda(torch::Tensor a);
 
+torch::Tensor GemmCuda(torch::Tensor a, torch::Tensor b);
+torch::Tensor
+GemmRowWiseCuda(torch::Tensor a, torch::Tensor b);
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("VecAddCuda", &VecAddCuda)
         .def("ReluCuda", &ReluCuda)
@@ -28,5 +32,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
             "BatchedOnlineSoftmaxCuda",
             &BatchedOnlineSoftmaxCuda
         )
+        .def("GemmCuda", &GemmCuda)
+        .def("GemmRowWiseCuda", &GemmRowWiseCuda)
         .def("VecAddRaw", &VecAddRaw);
 }

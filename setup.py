@@ -60,6 +60,8 @@ setup(
                 os.path.join(ROOT_DIR, "csrc", "softmax", "safe_softmax.cu"),
                 os.path.join(ROOT_DIR, "csrc", "softmax", "online_softmax.cu"),
                 os.path.join(ROOT_DIR, "csrc", "softmax", "batched_online_softmax.cu"),
+                os.path.join(ROOT_DIR, "csrc", "gemm", "gemm.cu"),
+                os.path.join(ROOT_DIR, "csrc", "gemm", "gemm_row_wise.cu"),
                 # Future kernels (e.g., gemm.cu) will be added here
             ],
             extra_compile_args={

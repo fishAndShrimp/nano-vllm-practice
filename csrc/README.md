@@ -91,4 +91,41 @@ for (int phase = 0; blockDim.x * phase < size;
 
 ---
 
+## forget to update <<<1,1>>> placeholder
+
+```cpp
+GemmRowWiseKernel<scalar_t><<<1, 1>>>
+```
+
+---
+
+## always use (ly, lx) in tile
+
+```cpp
+for (int k = 0; k < kTileSize; k++) {
+    pvalue += a_tile[ly][k] * b_tile[k][lx];
+}
+```
+
+```cpp
+for (int k = 0; k < kTileSize; k++) {
+    pvalues[lx] +=
+        a_tile[k] * b_tile[k][lx];
+}
+```
+
+---
+
+## convert [gy][gx] => [gy*dim_m/dim_p + gx]
+
+Always check the `gy*dim_m/dim_p` and `cond2` from if(cond1 && cond2)
+
+```cpp
+b_tile[row][col] =
+    b[(kTileSize * phase + row) *
+            dim_p +
+        (kTileSize * tile_idx + col)];
+```
+
+---
 
