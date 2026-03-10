@@ -20,6 +20,17 @@ torch::Tensor GemmCuda(torch::Tensor a, torch::Tensor b);
 torch::Tensor
 GemmRowWiseCuda(torch::Tensor a, torch::Tensor b);
 
+torch::Tensor FlashAttentionCuda(
+    torch::Tensor q,
+    torch::Tensor k,
+    torch::Tensor v
+);
+torch::Tensor FlashAttentionCoalescedCuda(
+    torch::Tensor q,
+    torch::Tensor k,
+    torch::Tensor v
+);
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("VecAddCuda", &VecAddCuda)
         .def("ReluCuda", &ReluCuda)
@@ -34,5 +45,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         )
         .def("GemmCuda", &GemmCuda)
         .def("GemmRowWiseCuda", &GemmRowWiseCuda)
+        .def("FlashAttentionCuda", &FlashAttentionCuda)
+        .def(
+            "FlashAttentionCoalescedCuda",
+            &FlashAttentionCoalescedCuda
+        )
         .def("VecAddRaw", &VecAddRaw);
 }

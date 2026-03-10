@@ -109,8 +109,8 @@ __global__ void GemmRowWiseKernel(
 torch::Tensor
 GemmRowWiseCuda(torch::Tensor a, torch::Tensor b) {
     TORCH_CHECK_EQ(a.is_cuda(), true);
-    TORCH_CHECK_EQ(b.is_contiguous(), true);
-    TORCH_CHECK_EQ(a.is_cuda(), true);
+    TORCH_CHECK_EQ(b.is_cuda(), true);
+    TORCH_CHECK_EQ(a.is_contiguous(), true);
     TORCH_CHECK_EQ(b.is_contiguous(), true);
 
     TORCH_CHECK_EQ(a.dim() >= 2, true);

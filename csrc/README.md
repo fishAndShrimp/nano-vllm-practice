@@ -129,3 +129,83 @@ b_tile[row][col] =
 
 ---
 
+## forget to init in for loop
+
+```cpp
+for (int c; c < kDimHead; c++) {;}
+for (int c=0; c < kDimHead; c++) {;}
+```
+
+---
+
+## forget softmax
+
+```python
+out1 = q @ k.transpose(-2, -1)
+out1 /= C**0.5
+out1 = F.softmax(out1, dim=-1)
+out1 = out1 @ v
+```
+
+---
+
+## score 0.0 ruins sum_softmax
+
+```cpp
+        // [STEP: convert scores to weights]
+#pragma unroll
+        for (int lx = 0; lx < kTileSize; lx++) {
+            // scores => weights
+            // !!! [CRITICAL: MASKING] !!!
+            // A rare bounds check required for math
+            // correctness, not memory safety. Even without
+            // array overflow, out-of-bounds default scores
+            // (0.0) would evaluate to exp(0.0 - m_new) > 0,
+            // silently corrupting the sum_softmax
+            // denominator.
+
+            auto gx = kTileSize * tile_idx + lx;
+            if (gx < dim_t) {
+                sw[lx] = exp(sw[lx] - m_new);
+            } else {
+                sw[lx] = 0.0;
+            }
+
+            sum_softmax += sw[lx];
+        }
+```
+
+---
+
+## iterate the full kDimHead when loading v with k_tile
+
+```cpp
+                // !!! [CRITICAL: REGISTER ALLOCATION] !!!
+                // We must iterate the full kDimHead to
+                // maintain static indexing. Dynamic
+                // indexing would force `hidden` to spill to
+                // slow HBM.
+#pragma unroll
+                for (int c = 0; c < kDimHead; c++) {
+                    auto lc = c - kTileSize * phase;
+                    if (0 <= lc && lc < kTileSize) {
+                        hidden[c] +=
+                            weight * sdata.v[lx][lc];
+                    }
+                }
+```
+
+---
+
+## phase loop
+
+```cpp
+        // [STEP: phases]
+        for (int phase = 0; kTileSize * phase < dim_c;
+             phase++) {;}
+```
+
+---
+
+
+
