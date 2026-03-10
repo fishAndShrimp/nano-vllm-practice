@@ -63,3 +63,14 @@ out = F.scaled_dot_product_attention(
 ```
 
 ---
+
+## bias=False
+
+```python
+self.gate_proj = nn.Linear(d_model, intermediate_size, bias=False)
+self.up_proj = nn.Linear(d_model, intermediate_size, bias=False)
+self.down_proj = nn.Linear(d_model, intermediate_size, bias=False)
+```
+
+---
+

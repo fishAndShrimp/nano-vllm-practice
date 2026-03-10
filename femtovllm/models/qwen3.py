@@ -5,16 +5,6 @@ import torch.nn.functional as F
 # from transformers import Qwen3Config
 
 
-class SiluAndMul(nn.Module):
-    """
-    SwiGLU
-    """
-
-    def forward(self, x: torch.Tensor):
-        x, y = x.chunk(2, dim=-1)
-        return F.silu(x) * y
-
-
 class QwenRotaryEmbedding(nn.Module):
     """
     Qwen Rope
@@ -71,7 +61,12 @@ class QwenRotaryEmbedding(nn.Module):
 
 
 class QwenSelfAttention(nn.Module):
-    """ """
+    """
+    diff from nanogpt:
+    - GQA
+    - Rope
+    - KVCache
+    """
 
     def __init__(
         self,
@@ -79,7 +74,7 @@ class QwenSelfAttention(nn.Module):
         n_heads: int,
         n_kv_heads: int,
         max_seq_len: int,
-        dropout: float = 0.1,
+        dropout_p: float = 0.1,
     ):
         super().__init__()
 
@@ -97,7 +92,7 @@ class QwenSelfAttention(nn.Module):
         self.d_head = d_head
         self.n_rep = n_rep
 
-        self.dropout = dropout
+        self.dropout_p = dropout_p
 
         self.w_q = nn.Linear(d_model, n_heads * d_head, bias=True)
         self.w_k = nn.Linear(d_model, n_kv_heads * d_head, bias=True)
@@ -153,7 +148,7 @@ class QwenSelfAttention(nn.Module):
             k_rep,
             v_rep,
             is_causal=(T > 1),
-            dropout_p=(self.dropout if self.training else 0.0),
+            dropout_p=(self.dropout_p if self.training else 0.0),
         )
 
         # (B, T, H, D)
@@ -161,3 +156,33 @@ class QwenSelfAttention(nn.Module):
         out = out.transpose(1, 2).contiguous().view(B, T, C)
 
         return self.proj(out), (k, v)
+
+
+class SiluAndMul(nn.Module):
+    """
+    SwiGLU
+    """
+
+    def forward(self, x: torch.Tensor):
+        x, y = x.chunk(2, dim=-1)
+        return F.silu(x) * y
+
+
+class QwenFeedForward(nn.Module):
+    """ """
+
+    def __init__(
+        self,
+        d_model: int,
+        intermediate_size: int,
+    ):
+        super().__init__()
+        self.gate_up_proj = nn.Linear(d_model, 2 * intermediate_size, bias=False)
+        self.down_proj = nn.Linear(intermediate_size, d_model, bias=False)
+
+        self.act_fn = SiluAndMul()
+
+    def forward(self, x):
+        return self.down_proj(
+            self.act_fn(self.gate_up_proj(x)),
+        )
