@@ -8,7 +8,7 @@ constexpr int kTileSize = 32;
 constexpr int kDimHead = 128;
 
 template <typename scalar_t>
-__global__ void FlashAttentionKernel(
+__global__ void FlashAttentionCoalescedKernel(
     const scalar_t* __restrict__ q_batched,
     const scalar_t* __restrict__ k_t_batched,
     const scalar_t* __restrict__ v_batched,
@@ -23,7 +23,12 @@ __global__ void FlashAttentionKernel(
     auto out = out_batched + dim_t * dim_c * batch_idx;
 
     scalar_t q_tile[kTileSize];
-    __shared__ scalar_t k_tile[kTileSize][kTileSize + 1];
+    // use previous k_tile to help load q and v
+    __shared__ union {
+        scalar_t q[kTileSize][kTileSize + 1];
+        scalar_t k[kTileSize][kTileSize + 1];
+        scalar_t v[kTileSize][kTileSize + 1];
+    } sdata;
     scalar_t hidden[kDimHead];
 
 #pragma unroll
@@ -32,7 +37,8 @@ __global__ void FlashAttentionKernel(
     }
 
     auto ly = threadIdx.x;
-    auto gy = blockDim.x * blockIdx.x + ly;
+    auto gy_base = blockDim.x * blockIdx.x;
+    auto gy = gy_base + ly;
 
     scalar_t m_softmax = static_cast<scalar_t>(-INFINITY);
     scalar_t sum_softmax = static_cast<scalar_t>(0);
@@ -47,35 +53,46 @@ __global__ void FlashAttentionKernel(
             sw[lx] = 0.0;
         }
 
+        // [STEP: phases]
         for (int phase = 0; kTileSize * phase < dim_c;
              phase++) {
-#pragma unroll
-            for (int lx = 0; lx < kTileSize; lx++) {
-                if ((gy) < dim_t &&
-                    (kTileSize * phase + lx) < dim_c) {
-                    q_tile[lx] =
-                        q[(gy)*dim_c +
-                          (kTileSize * phase + lx)];
+            // [STEP: load q]
+            for (int row = 0; row < kTileSize; row++) {
+                auto col = threadIdx.x;
+                if ((gy_base + row) < dim_t &&
+                    (kTileSize * phase + col) < dim_c) {
+                    sdata.q[row][col] =
+                        q[(gy_base + row) * dim_c +
+                          (kTileSize * phase + col)];
                 } else {
-                    q_tile[lx] = static_cast<scalar_t>(0);
+                    sdata.q[row][col] =
+                        static_cast<scalar_t>(0);
                 }
             }
+            __syncthreads();
+#pragma unroll
+            for (int lx = 0; lx < kTileSize; lx++) {
+                q_tile[lx] = sdata.q[ly][lx];
+            }
+            __syncthreads();
 
+            // [STEP: load k_t]
             for (int row = 0; row < kTileSize; row++) {
                 auto col = threadIdx.x;
                 if ((kTileSize * phase + row) < dim_c &&
                     (kTileSize * tile_idx + col) < dim_t) {
-                    k_tile[row][col] =
+                    sdata.k[row][col] =
                         k_t[(kTileSize * phase + row) *
                                 dim_t +
                             (kTileSize * tile_idx + col)];
                 } else {
-                    k_tile[row][col] =
+                    sdata.k[row][col] =
                         static_cast<scalar_t>(0);
                 }
             }
             __syncthreads();
 
+            // [STEP: calc q@k_t]
 #pragma unroll
             for (int k = 0; k < kTileSize; k++) {
                 auto q_val = q_tile[k];
@@ -83,7 +100,7 @@ __global__ void FlashAttentionKernel(
 #pragma unroll
                 for (int lx = 0; lx < kTileSize; lx++) {
                     sw[lx] += static_cast<float>(q_val) *
-                              k_tile[k][lx];
+                              sdata.k[k][lx];
                 }
             }
             __syncthreads();
@@ -110,7 +127,7 @@ __global__ void FlashAttentionKernel(
 #pragma unroll
         for (int lx = 0; lx < kTileSize; lx++) {
             // scores => weights
-            // !!! [CRITICAL MASKING] !!!
+            // !!! [CRITICAL: MASKING] !!!
             // A rare bounds check required for math
             // correctness, not memory safety. Even without
             // array overflow, out-of-bounds default scores
@@ -128,18 +145,45 @@ __global__ void FlashAttentionKernel(
             sum_softmax += sw[lx];
         }
 
-        // [STEP: add weighted v]
-#pragma unroll
-        for (int lx = 0; lx < kTileSize; lx++) {
-            auto gx = kTileSize * tile_idx + lx;
-            auto weight = sw[lx];
-#pragma unroll
-            for (int c = 0; c < kDimHead; c++) {
-                if ((gx) < dim_t && (c) < dim_c) {
-                    hidden[c] +=
-                        weight * v[(gx)*dim_c + (c)];
+        // [STEP: phases]
+        for (int phase = 0; kTileSize * phase < dim_c;
+             phase++) {
+            // [STEP: load v]
+            for (int row = 0; row < kTileSize; row++) {
+                auto col = threadIdx.x;
+                if ((kTileSize * tile_idx + row) < dim_t &&
+                    (kTileSize * phase + col) < dim_c) {
+                    sdata.v[row][col] =
+                        v[(kTileSize * tile_idx + row) *
+                              dim_c +
+                          (kTileSize * phase + col)];
+                } else {
+                    sdata.v[row][col] =
+                        static_cast<scalar_t>(0);
                 }
             }
+            __syncthreads();
+
+            // [STEP: add weighted v]
+#pragma unroll
+            for (int lx = 0; lx < kTileSize; lx++) {
+                auto weight = sw[lx];
+
+                // !!! [CRITICAL: REGISTER ALLOCATION] !!!
+                // We must iterate the full kDimHead to
+                // maintain static indexing. Dynamic
+                // indexing would force `hidden` to spill to
+                // slow HBM.
+#pragma unroll
+                for (int c = 0; c < kDimHead; c++) {
+                    auto lc = c - kTileSize * phase;
+                    if (0 <= lc && lc < kTileSize) {
+                        hidden[c] +=
+                            weight * sdata.v[lx][lc];
+                    }
+                }
+            }
+            __syncthreads();
         }
 
         //         // [DEBUG: output softmax instead]
@@ -168,7 +212,7 @@ __global__ void FlashAttentionKernel(
     //     }
 }
 
-torch::Tensor FlashAttentionCuda(
+torch::Tensor FlashAttentionCoalescedCuda(
     torch::Tensor q,
     torch::Tensor k,
     torch::Tensor v
@@ -204,9 +248,9 @@ torch::Tensor FlashAttentionCuda(
         at::ScalarType::Half,
         at::ScalarType::BFloat16,
         q.scalar_type(),
-        "FlashAttentionCuda",
+        "FlashAttentionCoalescedCuda",
         ([&] {
-            FlashAttentionKernel<scalar_t>
+            FlashAttentionCoalescedKernel<scalar_t>
                 <<<dim3(
                        (dim_t + kTileSize - 1) / kTileSize,
                        dim_h,
