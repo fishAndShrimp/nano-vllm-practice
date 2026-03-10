@@ -24,17 +24,27 @@ __global__ void FlashAttentionKernel(
 
     scalar_t q_tile[kTileSize];
     __shared__ scalar_t k_tile[kTileSize][kTileSize + 1];
+    scalar_t hidden[kDimHead];
+
+#pragma unroll
+    for (int c = 0; c < kDimHead; c++) {
+        hidden[c] = static_cast<scalar_t>(0);
+    }
 
     auto ly = threadIdx.x;
     auto gy = blockDim.x * blockIdx.x + ly;
 
+    scalar_t m_softmax = static_cast<scalar_t>(-INFINITY);
+    scalar_t sum_softmax = static_cast<scalar_t>(0);
+
     for (int tile_idx = 0; kTileSize * tile_idx < dim_t;
          tile_idx++) {
-        float pvalues[kTileSize];
+        // sw: scores then weights
+        float sw[kTileSize];
 
 #pragma unroll
         for (int lx = 0; lx < kTileSize; lx++) {
-            pvalues[lx] = 0.0;
+            sw[lx] = 0.0;
         }
 
         for (int phase = 0; kTileSize * phase < dim_c;
@@ -72,23 +82,90 @@ __global__ void FlashAttentionKernel(
 
 #pragma unroll
                 for (int lx = 0; lx < kTileSize; lx++) {
-                    pvalues[lx] +=
-                        static_cast<float>(q_val) *
-                        k_tile[k][lx];
+                    sw[lx] += static_cast<float>(q_val) *
+                              k_tile[k][lx];
                 }
             }
             __syncthreads();
         }
 
+        // [STEP: FIND m_new]
+        auto sqrt_c = static_cast<scalar_t>(sqrt(dim_c));
+        auto m_new = m_softmax;
+#pragma unroll
+        for (int lx = 0; lx < kTileSize; lx++) {
+            sw[lx] /= sqrt_c;
+            m_new = max(m_new, sw[lx]);
+        }
+
+        // [STEP: maintain with m_new]
+        sum_softmax *= exp(m_softmax - m_new);
+#pragma unroll
+        for (int c = 0; c < kDimHead; c++) {
+            hidden[c] *= exp(m_softmax - m_new);
+        }
+        m_softmax = m_new;
+
+        // [STEP: convert scores to weights]
+#pragma unroll
+        for (int lx = 0; lx < kTileSize; lx++) {
+            // scores => weights
+            // !!! [CRITICAL MASKING] !!!
+            // A rare bounds check required for math
+            // correctness, not memory safety. Even without
+            // array overflow, out-of-bounds default scores
+            // (0.0) would evaluate to exp(0.0 - m_new) > 0,
+            // silently corrupting the sum_softmax
+            // denominator.
+
+            auto gx = kTileSize * tile_idx + lx;
+            if (gx < dim_t) {
+                sw[lx] = exp(sw[lx] - m_new);
+            } else {
+                sw[lx] = 0.0;
+            }
+
+            sum_softmax += sw[lx];
+        }
+
+        // [STEP: add weighted v]
 #pragma unroll
         for (int lx = 0; lx < kTileSize; lx++) {
             auto gx = kTileSize * tile_idx + lx;
-            if (gy < dim_t && gx < dim_t) {
-                out[(gy)*dim_t + (gx)] =
-                    static_cast<scalar_t>(pvalues[lx]);
+            auto weight = sw[lx];
+#pragma unroll
+            for (int c = 0; c < kDimHead; c++) {
+                if ((gx) < dim_t && (c) < dim_c) {
+                    hidden[c] +=
+                        weight * v[(gx)*dim_c + (c)];
+                }
             }
         }
+
+        //         // [DEBUG: output softmax instead]
+        // #pragma unroll
+        //         for (int lx = 0; lx < kTileSize; lx++) {
+        //             auto gx = kTileSize * tile_idx + lx;
+        //             if (gx < dim_t) {
+        //                 hidden[gx] = sw[lx];
+        //             }
+        //         }
     }
+
+#pragma unroll
+    for (int c = 0; c < kDimHead; c++) {
+        if ((gy) < dim_t && (c) < dim_c) {
+            out[gy * dim_c + c] = hidden[c] / sum_softmax;
+        }
+    }
+
+    //     // [DEBUG: output without sum_softmax]
+    // #pragma unroll
+    //     for (int c = 0; c < kDimHead; c++) {
+    //         if ((gy) < dim_t && (c) < dim_c) {
+    //             out[gy * dim_c + c] = hidden[c];
+    //         }
+    //     }
 }
 
 torch::Tensor FlashAttentionCuda(
@@ -115,6 +192,7 @@ torch::Tensor FlashAttentionCuda(
     int dim_h = q.size(1);
     int dim_t = q.size(2);
     int dim_c = q.size(3);
+    TORCH_CHECK_LE(dim_c, kDimHead);
 
     auto out = torch::empty(
         {dim_b, dim_h, dim_t, dim_c},
