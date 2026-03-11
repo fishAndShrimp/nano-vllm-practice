@@ -112,3 +112,30 @@ class QwenModel(nn.Module):
 
 ---
 
+## remember the returned (x, kv_cache)
+
+```python
+class QwenForCausalLM(nn.Module):
+    """ """
+
+    def __init__(self, config: Qwen3Config):
+        super().__init__()
+        self.model = QwenModel(config)
+        self.lm_head = nn.Linear(
+            config.hidden_size,
+            config.vocab_size,
+            bias=False,
+        )
+
+    def forward(self, idx):
+        # (B, T, C)
+        x, all_kv_cache = self.model(idx)
+
+        # (B, T, vocab_size)
+        logits = self.lm_head(x)
+
+        return logits, all_kv_cache
+```
+
+---
+
