@@ -186,3 +186,50 @@ class QwenFeedForward(nn.Module):
         return self.down_proj(
             self.act_fn(self.gate_up_proj(x)),
         )
+
+
+class QwenBlock(nn.Module):
+    """ """
+
+    def __init__(
+        self,
+        d_model: int,
+        n_heads: int,
+        n_kv_heads: int,
+        max_seq_len: int,
+        intermediate_size: int,
+        dropout_p: float = 0.1,
+    ):
+        super().__init__()
+
+        self.input_layernorm = nn.RMSNorm(d_model, eps=1e-6)
+        self.sa = QwenSelfAttention(
+            d_model=d_model,
+            n_heads=n_heads,
+            n_kv_heads=n_kv_heads,
+            max_seq_len=max_seq_len,
+            dropout_p=dropout_p,
+        )
+        self.dropout_sa = nn.Dropout(dropout_p)
+
+        self.post_attention_layernorm = nn.RMSNorm(d_model, eps=1e-6)
+        self.ffn = QwenFeedForward(
+            d_model=d_model,
+            intermediate_size=intermediate_size,
+        )
+        self.dropout_ffn = nn.Dropout(dropout_p)
+
+    def forward(self, x):
+        """ """
+        y, kv_cache = self.sa(
+            self.input_layernorm(x),
+        )
+        x = x + self.dropout_sa(y)
+
+        x = x + self.dropout_ffn(
+            self.ffn(
+                self.post_attention_layernorm(x),
+            )
+        )
+
+        return x, kv_cache
