@@ -1,8 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-# from transformers import Qwen3Config
+from transformers import Qwen3Config
 
 
 class QwenRotaryEmbedding(nn.Module):
@@ -233,3 +232,48 @@ class QwenBlock(nn.Module):
         )
 
         return x, kv_cache
+
+
+class QwenModel(nn.Module):
+    """ """
+
+    def __init__(
+        self,
+        config: Qwen3Config,
+    ):
+        super().__init__()
+
+        self.embed_tokens = nn.Embedding(
+            config.vocab_size,
+            config.hidden_size,
+        )
+
+        self.layers = nn.ModuleList(
+            [
+                QwenBlock(
+                    d_model=config.hidden_size,
+                    n_heads=config.num_attention_heads,
+                    n_kv_heads=config.num_key_value_heads,
+                    max_seq_len=config.max_position_embeddings,
+                    intermediate_size=config.intermediate_size,
+                )
+                for _ in range(config.num_hidden_layers)
+            ]
+        )
+
+        self.norm = nn.RMSNorm(
+            config.hidden_size,
+            eps=config.rms_norm_eps,
+        )
+
+    def forward(self, idx):
+        """ """
+        # (B, T, C)
+        x = self.embed_tokens(idx)
+
+        all_kv_cache = []
+        for layer in self.layers:
+            x, kv_cache = layer(x)
+            all_kv_cache.append(kv_cache)
+
+        return self.norm(x), all_kv_cache

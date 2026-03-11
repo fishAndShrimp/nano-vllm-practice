@@ -74,3 +74,41 @@ self.down_proj = nn.Linear(d_model, intermediate_size, bias=False)
 
 ---
 
+## final norm for pre-norm model
+
+```python
+class QwenModel(nn.Module):
+    """ """
+
+    def __init__(
+        self,
+        config: Qwen3Config,
+    ):
+        super().__init__()
+
+        self.embed_tokens = nn.Embedding(
+            config.vocab_size,
+            config.hidden_size,
+        )
+
+        self.layers = nn.ModuleList(
+            [
+                QwenBlock(
+                    d_model=config.hidden_size,
+                    n_heads=config.num_attention_heads,
+                    n_kv_heads=config.num_key_value_heads,
+                    max_seq_len=config.max_position_embeddings,
+                    intermediate_size=config.intermediate_size,
+                )
+                for _ in range(config.num_hidden_layers)
+            ]
+        )
+
+        self.norm = nn.RMSNorm(
+            config.hidden_size,
+            eps=config.rms_norm_eps,
+        )
+```
+
+---
+
