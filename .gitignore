@@ -44,6 +44,7 @@ references/nanogpt_practice/*.txt
 # ==============================
 # Model Weights
 # ==============================
+weights/
 *.pt
 *.pth
 *.safetensors

@@ -1,6 +1,10 @@
+import collections
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from safetensors import safe_open
 from transformers import Qwen3Config
 
 
@@ -74,6 +78,7 @@ class QwenSelfAttention(nn.Module):
         n_kv_heads: int,
         max_seq_len: int,
         dropout_p: float = 0.1,
+        config: Qwen3Config = None,
     ):
         super().__init__()
 
@@ -93,13 +98,16 @@ class QwenSelfAttention(nn.Module):
 
         self.dropout_p = dropout_p
 
-        self.w_q = nn.Linear(d_model, n_heads * d_head, bias=True)
-        self.w_k = nn.Linear(d_model, n_kv_heads * d_head, bias=True)
-        self.w_v = nn.Linear(d_model, n_kv_heads * d_head, bias=True)
+        self.w_q = nn.Linear(d_model, n_heads * d_head, bias=False)
+        self.w_k = nn.Linear(d_model, n_kv_heads * d_head, bias=False)
+        self.w_v = nn.Linear(d_model, n_kv_heads * d_head, bias=False)
 
+        rms_norm_eps = 1e-6 if (config is None) else config.rms_norm_eps
+        self.q_norm = nn.RMSNorm(d_head, eps=rms_norm_eps)
+        self.k_norm = nn.RMSNorm(d_head, eps=rms_norm_eps)
         self.rotary_embd = QwenRotaryEmbedding(max_seq_len, d_head)
 
-        self.proj = nn.Linear(d_model, d_model, bias=False)
+        self.o_proj = nn.Linear(d_model, d_model, bias=False)
 
     def forward(
         self,
@@ -119,6 +127,9 @@ class QwenSelfAttention(nn.Module):
         q = self.w_q(x).view(B, T, n_heads, d_head).transpose(1, 2)
         k = self.w_k(x).view(B, T, n_kv_heads, d_head).transpose(1, 2)
         v = self.w_v(x).view(B, T, n_kv_heads, d_head).transpose(1, 2)
+
+        q = self.q_norm(q)
+        k = self.k_norm(k)
 
         q = self.rotary_embd(q, position)
         k = self.rotary_embd(k, position)
@@ -154,7 +165,7 @@ class QwenSelfAttention(nn.Module):
         # (B, T, C)
         out = out.transpose(1, 2).contiguous().view(B, T, C)
 
-        return self.proj(out), (k, v)
+        return self.o_proj(out), (k, v)
 
 
 class SiluAndMul(nn.Module):
@@ -198,20 +209,23 @@ class QwenBlock(nn.Module):
         max_seq_len: int,
         intermediate_size: int,
         dropout_p: float = 0.1,
+        config: Qwen3Config = None,
     ):
         super().__init__()
 
-        self.input_layernorm = nn.RMSNorm(d_model, eps=1e-6)
+        rms_norm_eps = 1e-6 if (config is None) else config.rms_norm_eps
+        self.input_layernorm = nn.RMSNorm(d_model, eps=rms_norm_eps)
         self.sa = QwenSelfAttention(
             d_model=d_model,
             n_heads=n_heads,
             n_kv_heads=n_kv_heads,
             max_seq_len=max_seq_len,
             dropout_p=dropout_p,
+            config=config,
         )
         self.dropout_sa = nn.Dropout(dropout_p)
 
-        self.post_attention_layernorm = nn.RMSNorm(d_model, eps=1e-6)
+        self.post_attention_layernorm = nn.RMSNorm(d_model, eps=rms_norm_eps)
         self.ffn = QwenFeedForward(
             d_model=d_model,
             intermediate_size=intermediate_size,
@@ -256,6 +270,7 @@ class QwenModel(nn.Module):
                     n_kv_heads=config.num_key_value_heads,
                     max_seq_len=config.max_position_embeddings,
                     intermediate_size=config.intermediate_size,
+                    config=config,
                 )
                 for _ in range(config.num_hidden_layers)
             ]
@@ -299,3 +314,66 @@ class QwenForCausalLM(nn.Module):
         logits = self.lm_head(x)
 
         return logits, all_kv_cache
+
+
+def map_weight_key(hf_key: str):
+    """ """
+    return (
+        hf_key.replace(".self_attn.", ".sa.")
+        .replace(".q_proj.", ".w_q.")
+        .replace(".k_proj.", ".w_k.")
+        .replace(".v_proj.", ".w_v.")
+        .replace(".mlp.", ".ffn.")
+        .replace(".gate_proj.", ".gate_up_proj.")
+        .replace(".up_proj.", ".gate_up_proj.")
+    )
+
+
+def load_weights(
+    model: nn.Module,
+    local_weights_dir: Path | str,
+    ignore_hf_keys: set = None,
+):
+    """ """
+    if ignore_hf_keys is None:
+        ignore_hf_keys = {}
+
+    state_dict = model.state_dict()
+    my_keys_used = set()
+    fusion = collections.defaultdict(lambda: [None, None])
+
+    def merge_split_weights(my_key: str, hf_key: str, hf_tensor: torch.Tensor):
+        if ".gate_up_proj." in my_key:
+            idx = 0 if (".gate_proj." in hf_key) else 1
+            fusion[my_key][idx] = hf_tensor
+
+            if None not in fusion[my_key]:
+                state_dict[my_key].copy_(torch.cat(fusion[my_key], dim=0))
+                my_keys_used.add(my_key)
+                del fusion[my_key]
+
+            return True
+
+        return False
+
+    for path in Path(local_weights_dir).iterdir():
+        if path.suffix != ".safetensors":
+            continue
+
+        with safe_open(path, framework="pt", device="cpu") as f:
+            for hf_key in f.keys():
+                if hf_key in ignore_hf_keys:
+                    continue
+
+                my_key = map_weight_key(hf_key)
+
+                if my_key in state_dict:
+                    hf_tensor = f.get_tensor(hf_key)
+                    if not merge_split_weights(my_key, hf_key, hf_tensor):
+                        state_dict[my_key].copy_(hf_tensor)
+                        my_keys_used.add(my_key)
+                else:
+                    raise ValueError(f"UNEXPECTED {my_key=} {hf_key=}")
+
+    if state_dict.keys() != my_keys_used:
+        raise ValueError(f"MISSING {(state_dict.keys() - my_keys_used)=}")

@@ -139,3 +139,30 @@ class QwenForCausalLM(nn.Module):
 
 ---
 
+## nn.Linear shape is [out_features, in_features]
+
+when cat [gate_proj, up_proj], dim is 0
+
+```python
+def merge_split_weights(my_key: str, hf_key: str, hf_tensor: torch.Tensor):
+    if ".gate_up_proj." in my_key:
+        idx = 0 if (".gate_proj." in hf_key) else 1
+        fuse[my_key][idx] = hf_tensor
+
+        if None not in fuse[my_key]:
+            state_dict[my_key].copy_(torch.cat(fuse[my_key], dim=0))
+            my_keys_used.add(my_key)
+            del fuse[my_key]
+
+        return True
+
+    return False
+```
+
+```python
+>>> nn.Linear(3,4).weight.shape
+torch.Size([4, 3])
+```
+
+---
+
