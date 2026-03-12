@@ -84,7 +84,7 @@ class QwenSelfAttention(nn.Module):
 
         if d_model % n_heads != 0:
             raise ValueError(f"{(d_model % n_heads)=}")
-        d_head = d_model // n_heads
+        d_head = d_model // n_heads if (config is None) else config.head_dim
 
         if n_heads % n_kv_heads != 0:
             raise ValueError(f"{(n_heads % n_kv_heads)=}")
@@ -107,7 +107,7 @@ class QwenSelfAttention(nn.Module):
         self.k_norm = nn.RMSNorm(d_head, eps=rms_norm_eps)
         self.rotary_embd = QwenRotaryEmbedding(max_seq_len, d_head)
 
-        self.o_proj = nn.Linear(d_model, d_model, bias=False)
+        self.o_proj = nn.Linear(n_heads * d_head, d_model, bias=False)
 
     def forward(
         self,
@@ -163,7 +163,7 @@ class QwenSelfAttention(nn.Module):
 
         # (B, T, H, D)
         # (B, T, C)
-        out = out.transpose(1, 2).contiguous().view(B, T, C)
+        out = out.transpose(1, 2).contiguous().view(B, T, n_heads * d_head)
 
         return self.o_proj(out), (k, v)
 
@@ -370,8 +370,13 @@ def load_weights(
                 if my_key in state_dict:
                     hf_tensor = f.get_tensor(hf_key)
                     if not merge_split_weights(my_key, hf_key, hf_tensor):
-                        state_dict[my_key].copy_(hf_tensor)
-                        my_keys_used.add(my_key)
+                        try:
+                            state_dict[my_key].copy_(hf_tensor)
+                            my_keys_used.add(my_key)
+                        except Exception as e:
+                            raise RuntimeError(
+                                f"ERROR when copy {my_key=} <= {hf_key=} {hf_tensor.shape=}"
+                            ) from e
                 else:
                     raise ValueError(f"UNEXPECTED {my_key=} {hf_key=}")
 

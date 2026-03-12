@@ -166,3 +166,20 @@ torch.Size([4, 3])
 
 ---
 
+## head_dim != hidden_size // num_attention_heads
+
+```json
+Qwen3Config {
+  "architectures": [
+    "Qwen3ForCausalLM"
+  ],
+  "head_dim": 128,
+  "model_type": "qwen3",
+  "num_attention_heads": 16,
+  "num_hidden_layers": 28,
+  "num_key_value_heads": 8,
+}
+```
+
+---
+
