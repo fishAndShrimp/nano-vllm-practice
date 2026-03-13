@@ -112,8 +112,7 @@ class QwenSelfAttention(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        kv_past=None,
-        position: int = None,
+        kv_cache=None,
     ):
         """ """
         B, T, C = x.shape
@@ -131,11 +130,16 @@ class QwenSelfAttention(nn.Module):
         q = self.q_norm(q)
         k = self.k_norm(k)
 
+        position = None
+        if kv_cache is not None:
+            k_past, v_past = kv_cache
+            assert k_past.shape[-2] == v_past.shape[-2]
+            position = k_past.shape[-2]
+
         q = self.rotary_embd(q, position)
         k = self.rotary_embd(k, position)
 
-        if kv_past is not None:
-            k_past, v_past = kv_past
+        if kv_cache is not None:
             k = torch.cat((k_past, k), dim=-2)
             v = torch.cat((v_past, v), dim=-2)
 
@@ -232,10 +236,15 @@ class QwenBlock(nn.Module):
         )
         self.dropout_ffn = nn.Dropout(dropout_p)
 
-    def forward(self, x):
+    def forward(
+        self,
+        x,
+        kv_cache=None,
+    ):
         """ """
         y, kv_cache = self.sa(
             self.input_layernorm(x),
+            kv_cache=kv_cache,
         )
         x = x + self.dropout_sa(y)
 
@@ -281,15 +290,23 @@ class QwenModel(nn.Module):
             eps=config.rms_norm_eps,
         )
 
-    def forward(self, idx):
+    def forward(
+        self,
+        idx,
+        all_kv_cache=None,
+    ):
         """ """
         # (B, T, C)
         x = self.embed_tokens(idx)
 
-        all_kv_cache = []
-        for layer in self.layers:
-            x, kv_cache = layer(x)
-            all_kv_cache.append(kv_cache)
+        if all_kv_cache is None:
+            all_kv_cache = [None for _ in self.layers]
+
+        for i, layer in enumerate(self.layers):
+            x, all_kv_cache[i] = layer(
+                x,
+                kv_cache=all_kv_cache[i],
+            )
 
         return self.norm(x), all_kv_cache
 
@@ -308,9 +325,16 @@ class QwenForCausalLM(nn.Module):
         if config.tie_word_embeddings:
             self.lm_head.weight = self.model.embed_tokens.weight
 
-    def forward(self, idx):
+    def forward(
+        self,
+        idx,
+        all_kv_cache=None,
+    ):
         # (B, T, C)
-        x, all_kv_cache = self.model(idx)
+        x, all_kv_cache = self.model(
+            idx,
+            all_kv_cache=all_kv_cache,
+        )
 
         # (B, T, vocab_size)
         logits = self.lm_head(x)
@@ -323,14 +347,25 @@ class QwenForCausalLM(nn.Module):
         idx: torch.Tensor,
         max_new_tokens: int,
         temperature: float = 0.1,
+        enable_kv_cache: bool = True,
     ):
         """ """
         original_mode = self.training
 
         self.eval()
         try:
+            idx_next = idx
+            all_kv_cache = None
+
             for _ in range(max_new_tokens):
-                logits, all_kv_cache = self(idx)
+                if enable_kv_cache:
+                    logits, all_kv_cache = self(
+                        idx_next,
+                        all_kv_cache=all_kv_cache,
+                    )
+                else:
+                    logits, all_kv_cache = self(idx)
+
                 logits = logits[:, -1, :]
 
                 if temperature < 1e-5:
