@@ -305,6 +305,8 @@ class QwenForCausalLM(nn.Module):
             config.vocab_size,
             bias=False,
         )
+        if config.tie_word_embeddings:
+            self.lm_head.weight = self.model.embed_tokens.weight
 
     def forward(self, idx):
         # (B, T, C)
@@ -314,6 +316,37 @@ class QwenForCausalLM(nn.Module):
         logits = self.lm_head(x)
 
         return logits, all_kv_cache
+
+    @torch.inference_mode()
+    def generate(
+        self,
+        idx: torch.Tensor,
+        max_new_tokens: int,
+        temperature: float = 0.1,
+    ):
+        """ """
+        original_mode = self.training
+
+        self.eval()
+        try:
+            for _ in range(max_new_tokens):
+                logits, all_kv_cache = self(idx)
+                logits = logits[:, -1, :]
+
+                if temperature < 1e-5:
+                    idx_next = torch.argmax(logits, dim=-1, keepdim=True)
+                else:
+                    probs = F.softmax(
+                        logits / temperature,
+                        dim=-1,
+                    )
+                    idx_next = torch.multinomial(probs, num_samples=1)
+
+                idx = torch.cat([idx, idx_next], dim=-1)
+        finally:
+            self.train(original_mode)
+
+        return idx
 
 
 def map_weight_key(hf_key: str):

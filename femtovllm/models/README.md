@@ -183,3 +183,14 @@ Qwen3Config {
 
 ---
 
+## shape of lm_head and embed_tokens
+
+shapes are both (vocab_size, d_model)
+shape of nn.Linear is (out, in)
+
+```python
+if config.tie_word_embeddings:
+    self.lm_head.weight = self.model.embed_tokens.weight
+```
+
+---
