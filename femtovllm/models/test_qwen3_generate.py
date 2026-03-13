@@ -6,7 +6,18 @@ from transformers import AutoTokenizer, PreTrainedTokenizerFast, Qwen3Config
 from femtovllm.models.qwen3 import QwenForCausalLM, load_weights
 
 # -----
-TEXT = "The capital city of France is"
+USER_QUESTION = """
+What is yu-gi-oh card game?
+"""
+# -----
+TEMPLATE = """<|im_start|>system
+You are a helpful assistant.<|im_end|>
+<|im_start|>user
+{}<|im_end|>
+<|im_start|>assistant
+"""
+TEXT = TEMPLATE.format(USER_QUESTION)
+MAX_NEW_TOKENS = 1000
 # -----
 
 
@@ -29,9 +40,22 @@ idx = tokenizer(
     TEXT,
     return_tensors="pt",
 ).input_ids.to("cuda")
+
+eos_token_ids = [
+    tokenizer(x).input_ids[0]
+    for x in {
+        tokenizer.eos_token,
+        "<|im_end|>",
+        "<|endoftext|>",
+    }
+]
+
 idx_out = model.generate(
     idx,
-    max_new_tokens=100,
-    temperature=0.0000001,
+    max_new_tokens=MAX_NEW_TOKENS,
+    temperature=0.1,
+    eos_token_ids=eos_token_ids,
+    pad_token_id=tokenizer.pad_token_id,
+    presence_penalty=1.0,
 )
-pp(tokenizer.decode(idx_out))
+print(tokenizer.decode(idx_out[0]))

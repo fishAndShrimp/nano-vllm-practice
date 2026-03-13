@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from safetensors import safe_open
+from tqdm import tqdm
 from transformers import Qwen3Config
 
 
@@ -348,16 +349,50 @@ class QwenForCausalLM(nn.Module):
         max_new_tokens: int,
         temperature: float = 0.1,
         enable_kv_cache: bool = True,
+        eos_token_ids: int | list[int] = None,
+        pad_token_id: int = None,
+        presence_penalty: float = 0.5,
     ):
         """ """
-        original_mode = self.training
 
+        def build_eos_pad_ids(
+            eos_token_ids: int | list[int],
+            pad_token_id: int,
+        ):
+            if isinstance(eos_token_ids, int):
+                eos_token_ids = [eos_token_ids]
+            assert len(eos_token_ids) > 0
+
+            if pad_token_id is None:
+                pad_token_id = eos_token_ids[0]
+
+            eos_token_ids = torch.tensor(
+                eos_token_ids,
+                device=idx.device,
+            )
+
+            return eos_token_ids, pad_token_id
+
+        original_mode = self.training
         self.eval()
         try:
+            B, _ = idx.shape
+            if eos_token_ids is not None:
+                mask_finished: torch.Tensor = torch.zeros(
+                    (B, 1),
+                    dtype=torch.bool,
+                    device=idx.device,
+                )
+                eos_token_ids, pad_token_id = build_eos_pad_ids(
+                    eos_token_ids, pad_token_id
+                )
+
             idx_next = idx
             all_kv_cache = None
-
-            for _ in range(max_new_tokens):
+            for _ in tqdm(
+                range(max_new_tokens),
+                desc="Generating Tokens",
+            ):
                 if enable_kv_cache:
                     logits, all_kv_cache = self(
                         idx_next,
@@ -368,6 +403,11 @@ class QwenForCausalLM(nn.Module):
 
                 logits = logits[:, -1, :]
 
+                if presence_penalty > 0:
+                    for b in range(B):
+                        ids_presence = torch.unique(idx[b])
+                        logits[b, ids_presence] -= presence_penalty
+
                 if temperature < 1e-5:
                     idx_next = torch.argmax(logits, dim=-1, keepdim=True)
                 else:
@@ -377,7 +417,18 @@ class QwenForCausalLM(nn.Module):
                     )
                     idx_next = torch.multinomial(probs, num_samples=1)
 
+                if eos_token_ids is not None:
+                    idx_next.masked_fill_(mask_finished, pad_token_id)
+                    mask_finished = mask_finished | (
+                        #####
+                        torch.isin(idx_next, eos_token_ids)
+                    )
+
                 idx = torch.cat([idx, idx_next], dim=-1)
+
+                if (eos_token_ids is not None) and mask_finished.all():
+                    break
+
         finally:
             self.train(original_mode)
 
