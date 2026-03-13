@@ -54,8 +54,8 @@ class QwenRotaryEmbedding(nn.Module):
 
         # (1, 1, T, C)
         if position is not None:
-            w_sin = self.sin[position][None, None, None, :]
-            w_cos = self.cos[position][None, None, None, :]
+            w_sin = self.sin[position : position + T][None, None, ...]
+            w_cos = self.cos[position : position + T][None, None, ...]
         else:
             w_sin = self.sin[:T][None, None, ...]
             w_cos = self.cos[:T][None, None, ...]
