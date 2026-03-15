@@ -1,7 +1,7 @@
 import torch
 
 try:
-    from . import _C as _cuda_backend
+    from femtovllm import _C as _cuda_backend
 except ImportError as e:
     raise ImportError(
         "CUDA extension is not compiled. Please run `pip install .`"
