@@ -36,16 +36,17 @@ To prevent state corruption and memory leaks, `Sequence` mutations are strictly 
 A scheduling step is a **Multi-Dimensional Knapsack Problem** (Compute Budget, KV Cache, and future Multimodal Encoders). We strictly separate `can_consume` (Check) and `consume` (Commit) instead of using `try_consume`. This **Two-Phase Commit** prevents partial state pollution when one resource fails after another succeeds.
 调度步本质是**多维背包问题**（算力预算、显存、及未来的多模态编码器）。我们严格分离 `can_consume`（检查）和 `consume`（提交），弃用 `try_consume`。这种**两阶段提交**可防止多资源校验时的部分状态污染。
 
-代码范例 (Code Example):
-    # Phase 1: Check (Pure functions, no side effects / 纯函数，无副作用)
-    can_fit_budget = budget.can_consume(num_tokens)
-    can_fit_kv = kv_manager.can_allocate(seq, num_tokens)
-    # future: can_fit_encoder = encoder_manager.can_allocate(...)
+```python
+# Phase 1: Check (Pure functions, no side effects / 纯函数，无副作用)
+can_fit_budget = budget.can_consume(num_tokens)
+can_fit_kv = kv_manager.can_allocate(seq, num_tokens)
+# future: can_fit_encoder = encoder_manager.can_allocate(...)
 
-    if can_fit_budget and can_fit_kv:
-        # Phase 2: Commit (Atomic, guaranteed to succeed / 原子操作，必然成功)
-        budget.consume(num_tokens)
-        kv_manager.allocate(seq, num_tokens)
+if can_fit_budget and can_fit_kv:
+    # Phase 2: Commit (Atomic, guaranteed to succeed / 原子操作，必然成功)
+    budget.consume(num_tokens)
+    kv_manager.allocate(seq, num_tokens)
+```
 
 ---
 
