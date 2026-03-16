@@ -1,4 +1,5 @@
 import enum
+import time
 
 
 class SequenceStatus(enum.Enum):
@@ -23,14 +24,34 @@ class Sequence:
         seq_id: int | str,
         token_ids: list[int],
     ):
+        # [PART: const]
+        self.arrival_time = time.time()
         self.seq_id = seq_id
-        self.token_ids = token_ids
-        self.block_table: list[int] = []
+        # [PART: const]
+
+        # [PART: modified by RequestQueue]
         self.status = SequenceStatus.WAITING
+        # [PART: modified by RequestQueue]
+
+        # [PART: modified by Scheduler]
+        ## must copy
+        self.token_ids = [x for x in token_ids]
+        self.num_computed_tokens = 0
+
+        self.prefix_matched_length = 0
+        self.prefix_node = None
+        # [PART: modified by Scheduler]
 
     @property
-    def seq_len(self) -> int:
+    def num_tokens(self):
         return len(self.token_ids)
+
+    @property
+    def num_uncomputed_tokens(self):
+        return self.num_tokens - self.num_computed_tokens
 
     def append(self, token_id: int):
         self.token_ids.append(token_id)
+
+    def finish(self):
+        self.status = SequenceStatus.FINISHED
