@@ -1,7 +1,7 @@
-# BlockAllocator
+# KVCacheManager
 
-Allocate Paged KV Cache blocks to sequences, and reuse blocks to maximize GPU memory efficiency.
-为序列分配 Paged KV Cache 物理块，并通过复用机制最大化显存效率。
+Manage Paged KV Cache block tables for sequences, utilizing underlying block allocators to maximize GPU memory efficiency through prefix sharing and reuse.
+为序列管理 Paged KV Cache 物理块表，利用底层块分配器，通过前缀共享与复用机制最大化显存效率。
 
 ## Roadmap / 演进路线图
 
