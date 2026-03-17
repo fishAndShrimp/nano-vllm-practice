@@ -53,11 +53,12 @@ class Scheduler:
         seq.stop_reason = stop_reason
         self._finish(seq)
 
-    def _find_and_clean_finished(self):
+    def _sweep_stopped_sequences(self):
         """
         [Atomic]
-        - running => finished
+        - running (with stop_reason) => finished
         - increase resource
+        - remove from running queue
         """
         for seq in self.request_queue.sort_and_copy_running():
             if seq.stop_reason is not None:
@@ -185,7 +186,7 @@ class Scheduler:
     def step(self):
         """ """
         self.step_budget.reset()
-        self._find_and_clean_finished()
+        self._sweep_stopped_sequences()
 
         scheduled, has_resource = self._schedule_running()
         if has_resource:
