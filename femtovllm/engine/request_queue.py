@@ -28,9 +28,19 @@ class RequestQueue:
         self._running.sort(key=lambda x: x.arrival_time)
         return [x for x in self._running]
 
+    def running_head_is(self, seq: Sequence):
+        if not self._running:
+            raise RuntimeError("peek head in empty running")
+        return self._running[0] == seq
+
+    def running_tail_is(self, seq: Sequence):
+        if not self._running:
+            raise RuntimeError("peek tail in empty running")
+        return self._running[-1] == seq
+
     def preempt_running_tail(self) -> Sequence:
         if not self._running:
-            raise RuntimeError("preempt in empty running")
+            raise RuntimeError("preempt tail in empty running")
 
         seq = self._running.pop()
         seq.status = SequenceStatus.WAITING
@@ -47,3 +57,7 @@ class RequestQueue:
 
     def peek_waiting(self):
         return self._waiting[0]
+
+    @property
+    def size_waiting(self):
+        return len(self._waiting)

@@ -10,6 +10,9 @@ class KVCacheManager:
         num_blocks: int,
         block_size: int,
     ):
+        self.num_blocks = num_blocks
+        self.block_size = block_size
+
         self.block_allocator = BlockAllocator(
             num_blocks=num_blocks,
             block_size=block_size,
@@ -22,7 +25,7 @@ class KVCacheManager:
         seq_const: Sequence,
         num_scheduled_tokens: int,
     ):
-        block_size = self.block_allocator.block_size
+        block_size = self.block_size
         block_table = self.get_block_table(seq_const)
 
         total_tokens = seq_const.num_computed_tokens + num_scheduled_tokens
@@ -75,3 +78,18 @@ class KVCacheManager:
 
     def swap_out(self, seq_const: Sequence):
         raise NotImplementedError()
+
+    def calc_max_tokens_allocable(self, seq_const: Sequence):
+        """
+        sum of:
+        - remaining slots of last_block
+        - remaining blocks
+        """
+        block_size = self.block_size
+        block_table = self.get_block_table(seq_const)
+
+        num_blocks = len(block_table) + self.block_allocator.count_available()
+        return (
+            #####
+            num_blocks * block_size - seq_const.num_computed_tokens
+        )

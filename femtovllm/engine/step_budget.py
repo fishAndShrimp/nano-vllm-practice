@@ -3,9 +3,11 @@ class StepBudget:
         self,
         max_seqs: int,
         max_tokens: int,
+        max_tokens_per_seq: int,
     ):
         self.max_seqs = max_seqs
         self.max_tokens = max_tokens
+        self.max_tokens_per_seq = max_tokens_per_seq
 
         self.curr_seqs = 0
         self.curr_tokens = 0
@@ -31,3 +33,7 @@ class StepBudget:
 
         self.curr_seqs += 1
         self.curr_tokens += num_tokens
+
+    @property
+    def remaining_tokens(self):
+        return self.max_tokens - self.curr_tokens

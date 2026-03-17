@@ -42,6 +42,10 @@ class Sequence:
         self.prefix_node = None
         # [PART: modified by Scheduler]
 
+        # [PART: modified by ModelRunner]
+        self.stop_reason = None
+        # [PART: modified by ModelRunner]
+
     @property
     def num_tokens(self):
         return len(self.token_ids)
@@ -55,3 +59,29 @@ class Sequence:
 
     def finish(self):
         self.status = SequenceStatus.FINISHED
+
+    def is_running(self):
+        return self.status == SequenceStatus.RUNNING
+
+    def __repr__(self) -> str:
+        """
+        Dynamic repr for debugging. Truncates massive lists and resolves Enums.
+        """
+        attrs = []
+
+        for k, v in self.__dict__.items():
+            if k == "token_ids":
+                # Truncate to prevent console flooding during OOM/Scheduler crashes
+                content = ", ".join(
+                    map(str, v[:3]),
+                )
+                attrs.append(f"{k}=[{content}... (len={len(v)})]")
+            elif isinstance(v, enum.Enum):
+                attrs.append(f"{k}={v.name}")
+            else:
+                attrs.append(f"{k}={v!r}")
+
+        # Inject crucial computed properties missing from __dict__
+        attrs.append(f"num_uncomputed={self.num_uncomputed_tokens}")
+
+        return f"{self.__class__.__name__}({', '.join(attrs)})"
