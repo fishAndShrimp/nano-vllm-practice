@@ -1,0 +1,73 @@
+from pathlib import Path
+
+import torch
+from transformers import Qwen3Config
+
+from femtovllm.engine.kv_cache_manager import KVCacheManager
+from femtovllm.engine.sequence import Sequence
+from femtovllm.models import QwenForCausalLM
+
+
+class ModelRunner:
+    """
+    Currently support:
+    - Qwen3
+    """
+
+    def __init__(
+        self,
+        hf_config: Qwen3Config,
+        weights_dir: str | Path,
+        kv_cache_manager: KVCacheManager,
+        dtype=torch.float16,
+        device: str = "cuda",
+    ):
+        """ """
+        self.hf_config = hf_config
+        self.weights_dir = Path(weights_dir).resolve()
+        self.kv_cache_manager = kv_cache_manager
+        self.dtype = dtype
+        self.device = device
+
+        self.model = QwenForCausalLM(hf_config)
+        self.model.load_weights(self.weights_dir)
+
+        self.model.to(
+            dtype=self.dtype,
+            device=self.device,
+        )
+        self.model.eval()
+
+    @torch.inference_mode()
+    def step(self, scheduled: list[tuple[Sequence, int]]):
+        """ """
+        flatten = []
+        positions = []
+        cu_seqlens = [0]
+
+        for seq, num_tokens in scheduled:
+            i_pos = seq.num_computed_tokens
+
+            flatten.extend(seq.token_ids[i_pos : i_pos + num_tokens])
+            positions.extend(range(i_pos, i_pos + num_tokens))
+            cu_seqlens.append(cu_seqlens[-1] + num_tokens)
+
+        flatten = torch.tensor(
+            flatten,
+            dtype=torch.long,
+            device=self.device,
+        )
+        positions = torch.tensor(
+            positions,
+            dtype=torch.long,
+            device=self.device,
+        )
+        cu_seqlens = torch.tensor(
+            cu_seqlens,
+            dtype=torch.int32,
+            device=self.device,
+        )
+
+        logits = self.model.forward_varlen(flatten, positions, cu_seqlens)
+
+        return logits
