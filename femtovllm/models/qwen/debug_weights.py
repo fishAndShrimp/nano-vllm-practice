@@ -4,10 +4,11 @@ from pprint import pp
 from safetensors import safe_open
 from transformers import Qwen3Config
 
-from femtovllm.models.qwen3 import QwenForCausalLM, map_weight_key
+from femtovllm.models import QwenForCausalLM
+from femtovllm.models.qwen.qwen3 import map_weight_key
 
 local_weights_dir = (
-    Path(__file__).resolve().parent.parent / "weights" / "qwen3_0.6b_weights"
+    Path(__file__).resolve().parent.parent.parent / "weights" / "qwen3_0.6b_weights"
 )
 
 

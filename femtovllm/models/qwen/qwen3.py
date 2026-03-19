@@ -434,6 +434,15 @@ class QwenForCausalLM(nn.Module):
 
         return idx
 
+    def load_weights(
+        self,
+        local_weights_dir: Path | str,
+    ):
+        static_load_weights(
+            self,
+            local_weights_dir,
+        )
+
 
 def map_weight_key(hf_key: str):
     """ """
@@ -448,7 +457,7 @@ def map_weight_key(hf_key: str):
     )
 
 
-def load_weights(
+def static_load_weights(
     model: nn.Module,
     local_weights_dir: Path | str,
     ignore_hf_keys: set = None,
