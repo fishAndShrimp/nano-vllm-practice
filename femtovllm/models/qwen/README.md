@@ -93,7 +93,7 @@ class QwenModel(nn.Module):
 
         self.layers = nn.ModuleList(
             [
-                QwenBlock(
+                QwenDecoderLayer(
                     d_model=config.hidden_size,
                     n_heads=config.num_attention_heads,
                     n_kv_heads=config.num_key_value_heads,

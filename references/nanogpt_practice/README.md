@@ -3,6 +3,25 @@
 This directory contains my practice code for building a Generative Pre-trained Transformer (GPT) from scratch.
 这个目录包含了从零开始构建 GPT 模型的实践代码。
 
+## 📝 Terminology Note: The Overloaded "Block" / 术语说明：“Block”的歧义
+
+If you are reading the code in this `nanogpt_practice` folder, you will notice the heavy use of the word `block` and `block_size`. This is kept intentionally to faithfully reflect Andrej Karpathy's excellent tutorial. There is no need to rewrite this learning footprint, but it is crucial to understand the context switch when you move to the main `femtovllm` engine.
+如果您正在阅读 `nanogpt_practice` 文件夹中的代码，您会注意到 `block` 和 `block_size` 这两个词被频繁使用。这里刻意保留了原样，以忠实记录跟随 Andrej Karpathy 优秀教程的学习足迹。我们完全没必要去修改这段学习过程的代码，但在您前往主引擎 `femtovllm` 时，理解这里的语境切换至关重要。
+
+Here is a quick mapping of what "block" means here versus the rest of the repository:
+以下是“block”在当前目录与整个代码库其他部分中的含义对比：
+
+| Context / 语境 | Term / 术语 | Meaning / 实际含义 |
+| :--- | :--- | :--- |
+| **nanoGPT (Here)** | `block_size` | Sequence length or context window ($$T$$). / 序列长度或上下文窗口（$$T$$）。 |
+| **nanoGPT (Here)** | `Block` | A single Transformer Decoder Layer. / 单个 Transformer 解码器层。 |
+| **femtovllm (Engine)** | `block_size` | Number of tokens in a physical KV Cache block (PagedAttention). / 物理 KV Cache 块中包含的 Token 数量。 |
+| **csrc (CUDA)** | `kBlockSize` | Number of threads in a CUDA thread block. / CUDA 线程块中的线程数。 |
+
+**Key Takeaway / 核心提示：**
+In this reference folder, "block" is about the **model architecture and sequence context** (as taught in the tutorial). In the main engine and CUDA code, "block" strictly refers to **memory management and hardware execution**.
+在这个参考文件夹中，“block” 指的是**模型架构与序列上下文**（如教程中所授）。而在主引擎和 CUDA 代码中，“block” 严格指代**显存管理与硬件执行**。
+
 ## 📺 Reference / 参考资料
 
 The implementation here is entirely based on Andrej Karpathy's excellent tutorial video:
