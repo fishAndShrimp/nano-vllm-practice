@@ -1,5 +1,3 @@
-from typing import Iterable
-
 from femtovllm.engine.kv_cache_manager import KVCacheManager
 from femtovllm.engine.request_queue import RequestQueue
 from femtovllm.engine.sequence import Sequence
@@ -14,13 +12,10 @@ class Scheduler:
         step_budget: StepBudget,
         request_queue: RequestQueue,
         kv_cache_manager: KVCacheManager,
-        eos_token_ids: Iterable[int],
     ):
         self.step_budget = step_budget
         self.request_queue = request_queue
         self.kv_cache_manager = kv_cache_manager
-
-        self.eos_token_ids = set(eos_token_ids)
 
     def _preempt(self):
         """
@@ -193,3 +188,7 @@ class Scheduler:
             scheduled = self._schedule_waiting(scheduled)
 
         return scheduled
+
+    def add_sequence(self, seq: Sequence):
+        """ """
+        self.request_queue.push_waiting(seq)

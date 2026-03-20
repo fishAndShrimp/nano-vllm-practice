@@ -48,6 +48,9 @@ class RequestQueue:
 
         return seq
 
+    def push_waiting(self, seq: Sequence):
+        self._waiting.append(seq)
+
     def pop_waiting(self):
         seq = self._waiting.popleft()
         seq.status = SequenceStatus.RUNNING

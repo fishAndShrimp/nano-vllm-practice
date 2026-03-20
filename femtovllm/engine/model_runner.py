@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Optional
 
 import torch
 from transformers import Qwen3Config
@@ -17,17 +18,17 @@ class ModelRunner:
     def __init__(
         self,
         hf_config: Qwen3Config,
-        weights_dir: str | Path,
+        weights_dir: Path,
         kv_cache_manager: KVCacheManager,
-        dtype=torch.float16,
-        device: str = "cuda",
+        dtype: Optional[torch.dtype] = None,
+        device: Optional[str] = None,
     ):
         """ """
         self.hf_config = hf_config
-        self.weights_dir = Path(weights_dir).resolve()
+        self.weights_dir = weights_dir
         self.kv_cache_manager = kv_cache_manager
-        self.dtype = dtype
-        self.device = device
+        self.dtype = torch.float16 if (dtype is None) else dtype
+        self.device = "cuda" if (device is None) else device
 
         self.model = QwenForCausalLM(hf_config)
         self.model.load_weights(self.weights_dir)
