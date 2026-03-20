@@ -243,6 +243,8 @@ class QwenBlock(nn.Module):
         kv_cache=None,
     ):
         """ """
+        # (B, T, C)
+        #    (T, C) varlen
         y, kv_cache = self.sa(
             self.input_layernorm(x),
             kv_cache=kv_cache,
@@ -294,10 +296,13 @@ class QwenModel(nn.Module):
     def forward(
         self,
         idx,
-        all_kv_cache=None,
+        all_kv_cache: list[tuple[torch.Tensor, torch.Tensor]] = None,
     ):
-        """ """
+        """
+        - all_kv_cache: legacy list[(k,v)] mechanism
+        """
         # (B, T, C)
+        #    (T, C) varlen
         x = self.embed_tokens(idx)
 
         if all_kv_cache is None:
@@ -341,6 +346,72 @@ class QwenForCausalLM(nn.Module):
         logits = self.lm_head(x)
 
         return logits, all_kv_cache
+
+    def forward_varlen(
+        self,
+        # (T)
+        idx_flatten: torch.Tensor,
+        positions: torch.Tensor,
+        cu_seqlens: torch.Tensor,
+        k_cache_pool: torch.Tensor,
+        v_cache_pool: torch.Tensor,
+        block_tables: torch.Tensor,
+    ):
+        return self._forward_varlen_fake(
+            idx_flatten,
+            positions,
+            cu_seqlens,
+            k_cache_pool,
+            v_cache_pool,
+            block_tables,
+        )
+
+    def _forward_varlen_fake(
+        self,
+        # (T)
+        idx_flatten: torch.Tensor,
+        positions: torch.Tensor,
+        cu_seqlens: torch.Tensor,
+        k_cache_pool: torch.Tensor,
+        v_cache_pool: torch.Tensor,
+        block_tables: torch.Tensor,
+    ):
+        _PAD_TOKEN = "<|endoftext|>"
+        _PAD_TOKEN_ID = 151643
+
+        B = len(cu_seqlens) - 1
+        T = max(
+            [
+                #####
+                (cu_seqlens[i + 1] - cu_seqlens[i])
+                for i in range(B)
+            ]
+        )
+
+        idx = torch.full(
+            (B, T),
+            fill_value=_PAD_TOKEN_ID,
+            dtype=idx_flatten.dtype,
+            device=idx_flatten.device,
+        )
+
+        for i in range(B):
+            i_len = cu_seqlens[i + 1] - cu_seqlens[i]
+            idx[i, :i_len] = idx_flatten[
+                #####
+                cu_seqlens[i] : cu_seqlens[i + 1]
+            ]
+
+        x, _ = self.model(idx, None)
+
+        x_flatten = []
+        for i in range(B):
+            i_len = cu_seqlens[i + 1] - cu_seqlens[i]
+            x_flatten.append(x[i, :i_len])
+        x_flatten = torch.cat(x_flatten, dim=0)
+
+        logits_flatten: torch.Tensor = self.lm_head(x_flatten)
+        return logits_flatten
 
     @torch.inference_mode()
     def generate(
