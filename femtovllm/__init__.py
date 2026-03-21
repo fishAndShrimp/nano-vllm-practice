@@ -1,1 +1,1 @@
-from femtovllm.llm import LLM
+from femtovllm.entrypoints.llm import LLM
