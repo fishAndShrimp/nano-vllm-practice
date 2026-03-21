@@ -5,6 +5,7 @@ import torch
 from transformers import Qwen3Config
 
 from femtovllm.engine.kv_cache_manager import KVCacheManager
+from femtovllm.engine.sampler import Sampler
 from femtovllm.engine.sequence import Sequence
 from femtovllm.models import QwenForCausalLM
 
@@ -39,17 +40,22 @@ class ModelRunner:
         )
         self.model.eval()
 
+        self.sampler = Sampler()
+
     @torch.inference_mode()
-    def step(self, scheduled: list[tuple[Sequence, int]]):
+    def step(
+        self,
+        scheduled_const: list[tuple[Sequence, int]],
+    ):
         """ """
         flatten = []
         positions = []
         cu_seqlens = [0]
 
-        for seq, num_tokens in scheduled:
-            i_pos = seq.num_computed_tokens
+        for seq_const, num_tokens in scheduled_const:
+            i_pos = seq_const.num_computed_tokens
 
-            flatten.extend(seq.token_ids[i_pos : i_pos + num_tokens])
+            flatten.extend(seq_const.token_ids[i_pos : i_pos + num_tokens])
             positions.extend(range(i_pos, i_pos + num_tokens))
             cu_seqlens.append(cu_seqlens[-1] + num_tokens)
 
@@ -69,6 +75,13 @@ class ModelRunner:
             device=self.device,
         )
 
-        logits = self.model.forward_varlen(flatten, positions, cu_seqlens)
+        # (B, vocab_size)
+        logits_next = self.model.forward_varlen(flatten, positions, cu_seqlens)
 
-        return logits
+        # (B,)
+        token_ids_next: list[int] = self.sampler(
+            logits_next,
+            scheduled_const,
+        )
+
+        return token_ids_next

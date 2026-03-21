@@ -13,7 +13,7 @@ Here is a quick mapping of what "block" means here versus the rest of the reposi
 
 | Context / 语境 | Term / 术语 | Meaning / 实际含义 |
 | :--- | :--- | :--- |
-| **nanoGPT (Here)** | `block_size` | Sequence length or context window ($$T$$). / 序列长度或上下文窗口（$$T$$）。 |
+| **nanoGPT (Here)** | `block_size` | Sequence length or context window (*T*). / 序列长度或上下文窗口（*T*）。 |
 | **nanoGPT (Here)** | `Block` | A single Transformer Decoder Layer. / 单个 Transformer 解码器层。 |
 | **femtovllm (Engine)** | `block_size` | Number of tokens in a physical KV Cache block (PagedAttention). / 物理 KV Cache 块中包含的 Token 数量。 |
 | **csrc (CUDA)** | `kBlockSize` | Number of threads in a CUDA thread block. / CUDA 线程块中的线程数。 |

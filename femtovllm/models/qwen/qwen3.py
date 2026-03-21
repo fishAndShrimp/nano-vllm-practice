@@ -357,6 +357,11 @@ class QwenForCausalLM(nn.Module):
         v_cache_pool: torch.Tensor,
         block_tables: torch.Tensor,
     ):
+        """
+        - input.shape: (seqlen_total,)
+        - output.shape: (B, vocab_size)
+        - B: len(cu_seqlens) - 1
+        """
         return self._forward_varlen_fake(
             idx_flatten,
             positions,
@@ -410,8 +415,11 @@ class QwenForCausalLM(nn.Module):
             x_flatten.append(x[i, :i_len])
         x_flatten = torch.cat(x_flatten, dim=0)
 
-        logits_flatten: torch.Tensor = self.lm_head(x_flatten)
-        return logits_flatten
+        # (B, C)
+        x_next = x_flatten[cu_seqlens[1:] - 1]
+        # (B, vocab_size)
+        logits_next: torch.Tensor = self.lm_head(x_next)
+        return logits_next
 
     @torch.inference_mode()
     def generate(

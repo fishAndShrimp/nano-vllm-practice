@@ -1,6 +1,8 @@
 import enum
 import time
 
+from femtovllm.protocol import SamplingParams
+
 
 class SequenceStatus(enum.Enum):
     WAITING = enum.auto()
@@ -23,10 +25,15 @@ class Sequence:
         self,
         seq_id: int | str,
         token_ids: list[int],
+        sampling_params: SamplingParams,
     ):
         # [PART: const]
         self.arrival_time = time.time()
         self.seq_id = seq_id
+
+        if not isinstance(sampling_params, SamplingParams):
+            raise TypeError(f"{type(sampling_params)=}")
+        self.sampling_params = sampling_params
         # [PART: const]
 
         # [PART: modified by RequestQueue]
@@ -42,9 +49,9 @@ class Sequence:
         self.prefix_node = None
         # [PART: modified by Scheduler]
 
-        # [PART: modified by ModelRunner]
+        # [PART: modified by CoreEngine]
         self.stop_reason = None
-        # [PART: modified by ModelRunner]
+        # [PART: modified by CoreEngine]
 
     @property
     def num_tokens(self):
