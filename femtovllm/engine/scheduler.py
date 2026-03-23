@@ -35,31 +35,17 @@ class Scheduler:
         self.step_budget.consume(num_tokens)
         self.kv_cache_manager.allocate(seq, num_tokens)
 
-    def _finish(self, seq: Sequence):
+    def free_and_finish(
+        self,
+        seq: Sequence,
+        stop_reason: str,
+    ):
         """
         [Atomic]
         - increase resource
         """
         self.kv_cache_manager.free(seq)
-        seq.finish()
-
-    def _force_finish(self, seq: Sequence, stop_reason: str):
-        """ """
-        seq.stop_reason = stop_reason
-        self._finish(seq)
-
-    def _sweep_stopped_sequences(self):
-        """
-        [Atomic]
-        - running (with stop_reason) => finished
-        - increase resource
-        - remove from running queue
-        """
-        for seq in self.request_queue.sort_and_copy_running():
-            if seq.stop_reason is not None:
-                self._finish(seq)
-
-        self.request_queue.clean_finished_running()
+        seq.finish(stop_reason)
 
     def _calc_limit_computation(self):
         """ """
@@ -71,6 +57,7 @@ class Scheduler:
     def _schedule_running(self):
         """ """
         scheduled: list[tuple[Sequence, int]] = []
+        aborted: list[Sequence] = []
         has_resource = True
 
         for seq in self.request_queue.sort_and_copy_running():
@@ -113,7 +100,8 @@ class Scheduler:
                     if limit_kv_cache <= 0:
                         if self.request_queue.running_head_is(seq):
                             # this seq requires more than entire kv_cache
-                            self._force_finish(seq, "OOM")
+                            self.free_and_finish(seq, "OOM")
+                            aborted.append(seq)
                         break
 
                     # truncate to fit kv_cache limit
@@ -133,13 +121,12 @@ class Scheduler:
                     (seq, num_tokens),
                 )
 
-        return scheduled, has_resource
+        return scheduled, aborted, has_resource
 
-    def _schedule_waiting(
-        self,
-        scheduled: list[tuple[Sequence, int]],
-    ):
+    def _schedule_waiting(self):
         """ """
+        scheduled: list[tuple[Sequence, int]] = []
+
         while self.request_queue.size_waiting > 0:
             # [STEP: highest priority waiting]
             seq = self.request_queue.peek_waiting()
@@ -180,14 +167,19 @@ class Scheduler:
 
     def step(self):
         """ """
+        self.request_queue.purge_zombie_finished()
         self.step_budget.reset()
-        self._sweep_stopped_sequences()
 
-        scheduled, has_resource = self._schedule_running()
+        scheduled, aborted, has_resource = self._schedule_running()
         if has_resource:
-            scheduled = self._schedule_waiting(scheduled)
+            scheduled.extend(
+                self._schedule_waiting(),
+            )
 
-        return scheduled
+        return scheduled, aborted
+
+    def has_unfinished_sequences(self):
+        return not self.request_queue.is_empty()
 
     def add_sequence(self, seq: Sequence):
         """ """

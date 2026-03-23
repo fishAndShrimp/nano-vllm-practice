@@ -10,7 +10,7 @@ from femtovllm.engine.request_queue import RequestQueue
 from femtovllm.engine.scheduler import Scheduler
 from femtovllm.engine.sequence import Sequence
 from femtovllm.engine.step_budget import StepBudget
-from femtovllm.protocol import SamplingParams
+from femtovllm.protocol import SamplingParams, StepDelta
 
 
 class CoreEngine:
@@ -97,15 +97,55 @@ class CoreEngine:
         # [STEP: gen huge kv_cache tensor]
         # TODO
 
-    def step(
-        self,
-    ):
+    def step(self):
         """ """
-        scheduled = self.scheduler.step()
-
-        self.model_runner.step(
+        scheduled, aborted = self.scheduler.step()
+        token_ids_next = self.model_runner.step(
             scheduled_const=scheduled,
         )
+        step_deltas: list[StepDelta] = []
+
+        # [STEP: scheduled]
+        if len(scheduled) != len(token_ids_next):
+            raise RuntimeError(f"{scheduled=} {token_ids_next=}")
+
+        for i, (seq, num_step_tokens) in enumerate(scheduled):
+            seq.num_computed_tokens += num_step_tokens
+            if seq.is_prefilling:
+                continue
+
+            token_id = token_ids_next[i]
+            seq.append(token_id)
+
+            if token_id in seq.stop_token_ids_set:
+                self.scheduler.free_and_finish(seq, "EOS")
+            elif seq.num_new_tokens >= seq.sampling_params.max_new_tokens:
+                self.scheduler.free_and_finish(seq, "LENGTH")
+
+            step_deltas.append(
+                StepDelta(
+                    req_id=seq.req_id,
+                    seq_id=seq.seq_id,
+                    new_token_id=token_id,
+                    stop_reason=seq.stop_reason,
+                )
+            )
+
+        # [STEP: aborted]
+        step_deltas.extend(
+            StepDelta(
+                req_id=x.req_id,
+                seq_id=x.seq_id,
+                new_token_id=None,
+                stop_reason=x.stop_reason,
+            )
+            for x in aborted
+        )
+
+        return step_deltas
+
+    def has_unfinished_requests(self):
+        return self.scheduler.has_unfinished_sequences()
 
     def add_request(
         self,
@@ -114,8 +154,10 @@ class CoreEngine:
         sampling_params: SamplingParams,
     ):
         """ """
+        # TODO: SequenceGroup
         self.scheduler.add_sequence(
             Sequence(
+                req_id=req_id,
                 seq_id=f"{req_id}_0",
                 token_ids=token_ids,
                 sampling_params=sampling_params,

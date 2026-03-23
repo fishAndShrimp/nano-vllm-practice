@@ -15,9 +15,36 @@ class SamplingParams:
     stop_token_ids: list[int] = dataclasses.field(
         default_factory=list,
     )
+    max_new_tokens: int = 5000
 
     def clone(self):
         return dataclasses.replace(
             self,
             stop_token_ids=[x for x in self.stop_token_ids],
         )
+
+
+class StepDelta:
+    """
+    streaming out shared by entrypoints and engine
+    - use __slots__ rather than __dict__ to speed up
+    """
+
+    __slots__ = (
+        "req_id",
+        "seq_id",
+        "new_token_id",
+        "stop_reason",
+    )
+
+    def __init__(
+        self,
+        req_id: str,
+        seq_id: str,
+        new_token_id: int,
+        stop_reason: str,
+    ):
+        self.req_id = req_id
+        self.seq_id = seq_id
+        self.new_token_id = new_token_id
+        self.stop_reason = stop_reason

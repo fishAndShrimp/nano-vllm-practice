@@ -16,13 +16,19 @@ class RequestQueue:
         # TODO
         self._swapped: list[Sequence] = []
 
-    def clean_finished_running(self):
+    def purge_zombie_finished(self):
         self._running = [
             #####
             x
             for x in self._running
-            if x.status != SequenceStatus.FINISHED
+            if (x.status != SequenceStatus.FINISHED)
         ]
+        self._waiting = deque(
+            #####
+            x
+            for x in self._waiting
+            if (x.status != SequenceStatus.FINISHED)
+        )
 
     def sort_and_copy_running(self):
         self._running.sort(key=lambda x: x.arrival_time)
@@ -64,3 +70,9 @@ class RequestQueue:
     @property
     def size_waiting(self):
         return len(self._waiting)
+
+    def is_empty(self):
+        return (
+            #####
+            self.size_waiting > 0 or len(self._running) > 0 or len(self._swapped) > 0
+        )

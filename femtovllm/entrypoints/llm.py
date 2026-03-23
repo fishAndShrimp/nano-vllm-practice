@@ -42,10 +42,40 @@ class LLM:
 
         self._request_counter = itertools.count()
 
+        self._texts = {}
+
     def generate(
         self,
         prompts: str | list[str],
         sampling_params: Optional[SamplingParams] = None,
+        keep_prompts: bool = True,
+        stream: bool = True,
+    ):
+        """ """
+        self.clear()
+        self.enqueue(
+            prompts=prompts,
+            sampling_params=sampling_params,
+            keep_prompts=keep_prompts,
+        )
+
+        generator = self.stream_outputs()
+        if stream:
+            return generator
+
+        for _ in generator:
+            pass
+        return self._texts
+
+    def clear(self):
+        """ """
+        self._texts.clear()
+
+    def enqueue(
+        self,
+        prompts: str | list[str],
+        sampling_params: Optional[SamplingParams] = None,
+        keep_prompts: bool = True,
     ):
         """ """
         if isinstance(prompts, str):
@@ -53,15 +83,45 @@ class LLM:
                 prompts,
             ]
 
+        req_ids = []
         for prompt in prompts:
+            req_id = "req_{}".format(
+                next(self._request_counter),
+            )
+            req_ids.append(req_id)
+            self._texts[req_id] = prompt if keep_prompts else ""
+
             token_ids, new_sampling_params = self.input_builder.build(
                 prompt, sampling_params
             )
 
             self.core_engine.add_request(
-                req_id="req_{}".format(
-                    next(self._request_counter),
-                ),
+                req_id=req_id,
                 token_ids=token_ids,
                 sampling_params=new_sampling_params,
             )
+
+        return req_ids
+
+    def stream_outputs(self):
+        """ """
+        while self.core_engine.has_unfinished_requests():
+            step_deltas = self.core_engine.step()
+
+            text_deltas = []
+            for i_step_delta in step_deltas:
+                if i_step_delta.new_token_id is not None:
+                    token_str = self.input_builder.tokenizer.decode(
+                        i_step_delta.new_token_id
+                    )
+
+                    text_deltas.append(
+                        (
+                            i_step_delta.req_id,
+                            token_str,
+                        )
+                    )
+                    self._texts[i_step_delta.req_id] += token_str
+
+            if len(text_deltas) > 0:
+                yield text_deltas

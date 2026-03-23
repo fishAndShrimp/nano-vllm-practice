@@ -23,49 +23,70 @@ class Sequence:
 
     def __init__(
         self,
+        req_id: int | str,
         seq_id: int | str,
         token_ids: list[int],
         sampling_params: SamplingParams,
     ):
         # [PART: const]
         self.arrival_time = time.time()
+        self.req_id = req_id
         self.seq_id = seq_id
 
         if not isinstance(sampling_params, SamplingParams):
             raise TypeError(f"{type(sampling_params)=}")
         self.sampling_params = sampling_params
+
+        self.stop_token_ids_set = set(sampling_params.stop_token_ids)
+        self.prompt_length = len(token_ids)
         # [PART: const]
 
-        # [PART: modified by RequestQueue]
+        # [PART: RUNNING <=> WAITING by RequestQueue]
+        # [PART: RUNNING => FINISHED by CoreEngine/Scheduler]
         self.status = SequenceStatus.WAITING
-        # [PART: modified by RequestQueue]
+        self.stop_reason = None
 
-        # [PART: modified by Scheduler]
         ## must copy
         self.token_ids = [x for x in token_ids]
         self.num_computed_tokens = 0
 
         self.prefix_matched_length = 0
         self.prefix_node = None
-        # [PART: modified by Scheduler]
-
-        # [PART: modified by CoreEngine]
-        self.stop_reason = None
-        # [PART: modified by CoreEngine]
 
     @property
     def num_tokens(self):
         return len(self.token_ids)
 
     @property
+    def num_new_tokens(self):
+        return self.num_tokens - self.prompt_length
+
+    @property
     def num_uncomputed_tokens(self):
         return self.num_tokens - self.num_computed_tokens
+
+    @property
+    def is_decoding(self):
+        """
+        It is possible that: num_computed_tokens == num_tokens + 1
+
+        since token_ids.append is called after maintaining num_computed_tokens
+        """
+        return self.num_computed_tokens >= self.num_tokens
+
+    @property
+    def is_prefilling(self):
+        return not self.is_decoding
 
     def append(self, token_id: int):
         self.token_ids.append(token_id)
 
-    def finish(self):
+    def finish(
+        self,
+        stop_reason: str,
+    ):
         self.status = SequenceStatus.FINISHED
+        self.stop_reason = stop_reason
 
     def is_running(self):
         return self.status == SequenceStatus.RUNNING
