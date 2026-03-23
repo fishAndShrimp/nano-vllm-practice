@@ -48,6 +48,9 @@ class ModelRunner:
         scheduled_const: list[tuple[Sequence, int]],
     ):
         """ """
+        if len(scheduled_const) <= 0:
+            return []
+
         flatten = []
         positions = []
         cu_seqlens = [0]
@@ -76,7 +79,14 @@ class ModelRunner:
         )
 
         # (B, vocab_size)
-        logits_next = self.model.forward_varlen(flatten, positions, cu_seqlens)
+        logits_next = self.model.forward_varlen(
+            idx_flatten=flatten,
+            positions=positions,
+            cu_seqlens=cu_seqlens,
+            k_cache_pool=None,
+            v_cache_pool=None,
+            block_tables=None,
+        )
 
         # (B,)
         token_ids_next: list[int] = self.sampler(

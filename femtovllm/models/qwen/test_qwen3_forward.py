@@ -14,19 +14,19 @@ local_weights_dir = (
 ## [STEP: init and load weights]
 config = Qwen3Config.from_pretrained(local_weights_dir)
 print(config)
-model = QwenForCausalLM(config)
-model.load_weights(local_weights_dir)
-model.to("cuda")
+causal_lm = QwenForCausalLM(config)
+causal_lm.load_weights(local_weights_dir)
+causal_lm.to("cuda")
 
 
 ## [STEP: disable dropout]
-model.eval()
+causal_lm.eval()
 
 
 ## [STEP: tokenize]
 tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(local_weights_dir)
 
-text = "Yugioh"
+text = "The capital of France is"
 idx = tokenizer(
     text,
     return_tensors="pt",
@@ -34,14 +34,21 @@ idx = tokenizer(
 
 
 ## [STEP: gen]
-temperature = 0.5
+temperature = 1.0
 
 
-print(f"{text} <= input")
+print(f"{text}     <== input")
 with torch.no_grad():
-    for _ in range(30):
-        out, all_kv_cache = model(idx)
+    for _ in range(1):
+        print(f"\n\n{idx=}")
+        out, _ = causal_lm.model(idx, None)
+        print(f"{out=}")
+        print(f"{out.shape=}")
+        out = causal_lm.lm_head(out)
         next_token_logits = out[:, -1, :]
+        print(f"{next_token_logits=}")
+        print(f"{next_token_logits.shape=}")
+
         next_token_probs = F.softmax(
             next_token_logits / temperature,
             dim=-1,

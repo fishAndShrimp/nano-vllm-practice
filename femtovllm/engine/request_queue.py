@@ -74,5 +74,7 @@ class RequestQueue:
     def is_empty(self):
         return (
             #####
-            self.size_waiting > 0 or len(self._running) > 0 or len(self._swapped) > 0
+            self.size_waiting <= 0
+            and len(self._running) <= 0
+            and len(self._swapped) <= 0
         )

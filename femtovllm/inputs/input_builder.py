@@ -62,4 +62,7 @@ class InputBuilder:
         stop_token_ids = list(set(stop_token_ids))
         sampling_params.stop_token_ids = stop_token_ids
 
-        return prompt, sampling_params
+        return (
+            self.tokenizer.encode(prompt),
+            sampling_params,
+        )

@@ -58,6 +58,8 @@ class CoreEngine:
                 "bf16": torch.bfloat16,
                 "bfloat16": torch.bfloat16,
             }[dtype.strip().casefold()]
+        if dtype == torch.float16:
+            raise RuntimeError(f"{dtype=} possibly leads to weights overflow")
 
         if device is not None:
             if not isinstance(device, str):
