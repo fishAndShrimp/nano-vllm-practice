@@ -109,19 +109,16 @@ class LLM:
             step_deltas = self.core_engine.step()
 
             text_deltas = []
-            for i_step_delta in step_deltas:
-                if i_step_delta.new_token_id is not None:
-                    token_str = self.input_builder.tokenizer.decode(
-                        i_step_delta.new_token_id
-                    )
+            for step_delta in step_deltas:
+                if step_delta.new_token_id is None:
+                    continue
 
-                    text_deltas.append(
-                        (
-                            i_step_delta.req_id,
-                            token_str,
-                        )
-                    )
-                    self._texts[i_step_delta.req_id] += token_str
+                token_str = self.input_builder.tokenizer.decode(step_delta.new_token_id)
+
+                text_deltas.append(
+                    (step_delta.req_id, token_str),
+                )
+                self._texts[step_delta.req_id] += token_str
 
             if len(text_deltas) > 0:
                 yield text_deltas
