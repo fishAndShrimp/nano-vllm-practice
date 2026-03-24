@@ -1,20 +1,39 @@
 from pathlib import Path
 
 import torch
+from rich.columns import Columns
+from rich.live import Live
+from rich.panel import Panel
 from transformers import Qwen3Config
 
 from femtovllm import LLM, SamplingParams
 
-# -----
+# ==========================================
+# Inputs & Templates
+# Define the chat template and prepare the batch of prompts
+# ==========================================
 TEMPLATE = """<|im_start|>system
 You are a helpful assistant.<|im_end|>
 <|im_start|>user
 {}<|im_end|>
 <|im_start|>assistant
 """
-# -----
 
 
+prompts = [
+    TEMPLATE.format(x)
+    for x in (
+        "The capital of France is",
+        "The capital city of England is",
+        "The capital city of the United Kingdom is",
+    )
+]
+
+
+# ==========================================
+# Engine Initialization & Generation Setup
+# Load model weights, configure memory blocks, and start the generation task
+# ==========================================
 weights_dir = (
     #####
     Path(__file__).resolve().parent.parent
@@ -36,21 +55,38 @@ llm = LLM(
 )
 
 
-print(
-    llm.generate(
-        [
-            TEMPLATE.format(x)
-            for x in (
-                "The capital of France is",
-                "The capital city of England is",
-                "The capital city of the United Kingdom is",
-            )
-        ],
-        sampling_params=SamplingParams(
-            temperature=0,
-            presence_penalty=1,
-            max_new_tokens=1000,
-        ),
-        stream=False,
-    )
+# Start generation and retrieve both the generator and the assigned request IDs
+stream_generator, req_ids = llm.generate(
+    prompts,
+    sampling_params=SamplingParams(
+        temperature=0,
+        presence_penalty=1,
+        max_new_tokens=1000,
+    ),
 )
+
+
+# ==========================================
+# Rich UI Rendering & Streaming Output
+# Dynamically render concurrent outputs in the terminal using Rich
+# ==========================================
+accumulated_texts = {req_id: "" for req_id in req_ids}
+
+
+def generate_layout():
+    panels = []
+    for req_id in req_ids:
+        panel = Panel(
+            accumulated_texts[req_id],
+            title=f"[bold cyan]{req_id}[/bold cyan]",
+            border_style="green",
+        )
+        panels.append(panel)
+    return Columns(panels)
+
+
+with Live(generate_layout(), refresh_per_second=15) as live:
+    for text_deltas in stream_generator:
+        for req_id, token_str in text_deltas:
+            accumulated_texts[req_id] += token_str
+        live.update(generate_layout())

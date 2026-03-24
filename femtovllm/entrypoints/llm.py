@@ -53,7 +53,7 @@ class LLM:
     ):
         """ """
         self.clear()
-        self.enqueue(
+        req_ids = self.enqueue(
             prompts=prompts,
             sampling_params=sampling_params,
             keep_prompts=keep_prompts,
@@ -61,7 +61,7 @@ class LLM:
 
         generator = self.stream_outputs()
         if stream:
-            return generator
+            return generator, req_ids
 
         for _ in generator:
             pass

@@ -29,6 +29,7 @@ dependencies:
 
   # UI
   - tqdm
+  - rich
 
   - pip
   - pip:
