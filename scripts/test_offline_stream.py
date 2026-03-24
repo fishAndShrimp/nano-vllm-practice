@@ -59,7 +59,7 @@ llm = LLM(
 stream_generator, req_ids = llm.generate(
     prompts,
     sampling_params=SamplingParams(
-        temperature=0,
+        temperature=0.5,
         presence_penalty=1,
         max_new_tokens=1000,
     ),
@@ -73,11 +73,24 @@ stream_generator, req_ids = llm.generate(
 accumulated_texts = {req_id: "" for req_id in req_ids}
 
 
+def format_content(raw_text: str) -> str:
+    text = raw_text.replace("<|im_end|>", "[bold red] ⏹ [/bold red]")
+
+    if "<think>" in text and "</think>" not in text:
+        text = text.replace("<think>", "[dim]<think>") + "[/dim]"
+    elif "<think>" in text and "</think>" in text:
+        text = text.replace("<think>", "[dim]<think>")
+        text = text.replace("</think>", "</think>[/dim]")
+
+    return text
+
+
 def generate_layout():
     panels = []
     for req_id in req_ids:
+        formatted_text = format_content(accumulated_texts[req_id])
         panel = Panel(
-            accumulated_texts[req_id],
+            formatted_text,
             title=f"[bold cyan]{req_id}[/bold cyan]",
             border_style="green",
         )
