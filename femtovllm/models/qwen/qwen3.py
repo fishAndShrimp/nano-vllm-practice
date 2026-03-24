@@ -274,15 +274,27 @@ class QwenSelfAttention(nn.Module):
 
             # (entire_length, H, D)
             # replicate kv
+            # (entire_length, n_kv_heads, n_rep, D)
+            #
+            # [CRITICAL: The Replica Manner for GQA]
+            # We must replicate the SAME kv_head `n_rep` times consecutively so that
+            # the first `n_rep` query heads share the exact same kv_head.
+            #
+            # Example: 4 Q_heads, 2 KV_heads (n_rep = 2)
+            # CORRECT memory layout after reshape: [KV0, KV0, KV1, KV1]
+            #   -> Q0 matches KV0, Q1 matches KV0 | Q2 matches KV1, Q3 matches KV1
+            #
+            # WRONG layout (if unsqueeze(1) was used): [KV0, KV1, KV0, KV1]
+            #   -> Q1 would wrongly match KV1, causing severe feature mismatch.
             i_k_rep = (
-                i_k.unsqueeze(1)
-                .expand(-1, n_rep, n_kv_heads, d_head)
-                .reshape(-1, n_rep * n_kv_heads, d_head)
+                i_k.unsqueeze(2)
+                .expand(-1, n_kv_heads, n_rep, d_head)
+                .reshape(-1, n_kv_heads * n_rep, d_head)
             )
             i_v_rep = (
-                i_v.unsqueeze(1)
-                .expand(-1, n_rep, n_kv_heads, d_head)
-                .reshape(-1, n_rep * n_kv_heads, d_head)
+                i_v.unsqueeze(2)
+                .expand(-1, n_kv_heads, n_rep, d_head)
+                .reshape(-1, n_kv_heads * n_rep, d_head)
             )
 
             # (T, H, D)

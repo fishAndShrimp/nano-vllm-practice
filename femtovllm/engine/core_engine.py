@@ -170,8 +170,11 @@ class CoreEngine:
             (B, max_blocks),
             dtype=torch.int32,
         )
-        for raw_table in raw_block_tables:
-            block_tables[: len(raw_table)] = torch.tensor(
+        for i, raw_table in enumerate(raw_block_tables):
+            block_tables[
+                #####
+                i, : len(raw_table)
+            ] = torch.tensor(
                 raw_table,
                 dtype=torch.int32,
             )

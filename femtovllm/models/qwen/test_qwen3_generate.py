@@ -17,7 +17,8 @@ You are a helpful assistant.<|im_end|>
 <|im_start|>assistant
 """
 TEXT = TEMPLATE.format(USER_QUESTION)
-MAX_NEW_TOKENS = 1000
+# TEXT = "The capital of France is"
+MAX_NEW_TOKENS = 200
 # -----
 
 
@@ -29,10 +30,10 @@ local_weights_dir = (
 
 config = Qwen3Config.from_pretrained(local_weights_dir)
 pp(config)
-model = QwenForCausalLM(config)
-model.load_weights(local_weights_dir)
-model.to("cuda")
-model.eval()
+causal_lm = QwenForCausalLM(config)
+causal_lm.load_weights(local_weights_dir)
+causal_lm.to("cuda")
+causal_lm.eval()
 
 
 tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(local_weights_dir)
@@ -50,10 +51,10 @@ eos_token_ids = [
     }
 ]
 
-idx_out = model.generate(
+idx_out = causal_lm.generate(
     idx,
     max_new_tokens=MAX_NEW_TOKENS,
-    temperature=0.1,
+    temperature=0,
     eos_token_ids=eos_token_ids,
     pad_token_id=tokenizer.pad_token_id,
     presence_penalty=1.0,

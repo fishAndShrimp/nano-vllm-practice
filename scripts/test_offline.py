@@ -5,6 +5,16 @@ from transformers import Qwen3Config
 
 from femtovllm import LLM, SamplingParams
 
+# -----
+TEMPLATE = """<|im_start|>system
+You are a helpful assistant.<|im_end|>
+<|im_start|>user
+{}<|im_end|>
+<|im_start|>assistant
+"""
+# -----
+
+
 weights_dir = (
     #####
     Path(__file__).resolve().parent.parent
@@ -29,13 +39,17 @@ llm = LLM(
 print(
     llm.generate(
         [
-            "The capital of France is",
-            "The capital city of England is",
-            "The capital city of the United Kingdom is",
+            TEMPLATE.format(x)
+            for x in (
+                "The capital of France is",
+                "The capital city of England is",
+                "The capital city of the United Kingdom is",
+            )
         ],
         sampling_params=SamplingParams(
             temperature=0,
-            max_new_tokens=1,
+            presence_penalty=1,
+            max_new_tokens=1000,
         ),
         stream=False,
     )
