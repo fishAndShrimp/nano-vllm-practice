@@ -2,6 +2,8 @@
 
 My learning journey to understand LLM inference optimization.
 
+![Offline Stream Demo](assets/test_offline_stream.gif)
+
 ## Roadmap
 1. Study `nanoGPT` for Transformer basics.
 2. Study `nano-vllm` for KV Cache and PagedAttention.
