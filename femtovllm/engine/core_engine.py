@@ -29,10 +29,10 @@ class CoreEngine:
         device: Optional[str] = None,
     ):
         """ """
-        #####
-        # [PARSE: user config]
-        # [TODO: class EngineConfig]
-        #####
+        ##########
+        ##### [PARSE: user config]
+        ##### [TODO: class EngineConfig]
+        ##########
         max_seqs = int(max_seqs)
         max_tokens = int(max_tokens)
         max_tokens_per_seq = int(max_tokens_per_seq)
@@ -45,9 +45,10 @@ class CoreEngine:
 
         weights_dir = Path(weights_dir).resolve()
 
-        if dtype is not None:
-            if not isinstance(dtype, (str, torch.dtype)):
-                raise TypeError(f"{type(dtype)=}")
+        ##### [STEP: dtype]
+        dtype = torch.bfloat16 if (dtype is None) else dtype
+
+        # cast to torch.dtype
         if isinstance(dtype, str):
             dtype = {
                 "half": torch.half,
@@ -58,21 +59,39 @@ class CoreEngine:
                 "bf16": torch.bfloat16,
                 "bfloat16": torch.bfloat16,
             }[dtype.strip().casefold()]
+        elif isinstance(dtype, torch.dtype):
+            pass
+        else:
+            raise TypeError(f"{type(dtype)=}")
+
+        # invalid value
         if dtype == torch.float16:
             raise RuntimeError(f"{dtype=} possibly leads to weights overflow")
 
-        if device is not None:
-            if not isinstance(device, str):
-                raise TypeError(f"{type(device)=}")
-        #####
-        # [PARSE: user config]
-        #####
+        self.dtype = dtype
+        ##### [STEP: dtype]
 
+        ##### [STEP: device]
+        device = "cuda" if (device is None) else device
+
+        # invalid type
+        if not isinstance(device, str):
+            raise TypeError(f"{type(device)=}")
+
+        self.device = device
+        ##### [STEP: device]
+
+        ##########
+        ##### [PARSE: user config]
+        ##########
+
+        # [STEP: kv cache manager]
         kv_cache_manager = KVCacheManager(
             num_blocks=num_blocks,
             block_size=block_size,
         )
 
+        # [STEP: scheduler]
         self.scheduler = Scheduler(
             step_budget=StepBudget(
                 max_seqs=max_seqs,
@@ -96,14 +115,79 @@ class CoreEngine:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        # [STEP: gen huge kv_cache tensor]
-        # TODO
+        ##### [STEP: gen huge kv_cache tensors as pools]
+        n_kv_heads = hf_config.num_key_value_heads
+        d_head = hf_config.head_dim
+        n_layers = hf_config.num_hidden_layers
+
+        kv_cache_pool_shape = (
+            num_blocks,
+            block_size,
+            n_kv_heads,
+            d_head,
+        )
+
+        self.k_cache_pools: list[torch.Tensor] = [
+            torch.empty(
+                kv_cache_pool_shape,
+                dtype=dtype,
+                device=device,
+            )
+            for _ in range(n_layers)
+        ]
+        self.v_cache_pools: list[torch.Tensor] = [
+            torch.empty(
+                kv_cache_pool_shape,
+                dtype=dtype,
+                device=device,
+            )
+            for _ in range(n_layers)
+        ]
+        ##### [STEP: gen huge kv_cache tensors as pools]
+
+    def pad_block_tables(
+        self,
+        scheduled: list[tuple[Sequence, int]],
+    ):
+        """ """
+        B = len(scheduled)
+        if B <= 0:
+            return None
+
+        raw_block_tables = [
+            #####
+            self.scheduler.kv_cache_manager.get_block_table(x)
+            for x, _ in scheduled
+        ]
+        max_blocks = max(
+            #####
+            len(x)
+            for x in raw_block_tables
+        )
+
+        # pad -1 rather than 0
+        block_tables = -torch.ones(
+            (B, max_blocks),
+            dtype=torch.int32,
+        )
+        for raw_table in raw_block_tables:
+            block_tables[: len(raw_table)] = torch.tensor(
+                raw_table,
+                dtype=torch.int32,
+            )
+
+        return block_tables.to(
+            device=self.device,
+        )
 
     def step(self):
         """ """
         scheduled, aborted = self.scheduler.step()
         token_ids_next = self.model_runner.step(
             scheduled_const=scheduled,
+            k_cache_pools=self.k_cache_pools,
+            v_cache_pools=self.v_cache_pools,
+            block_tables=self.pad_block_tables(scheduled),
         )
         step_deltas: list[StepDelta] = []
 

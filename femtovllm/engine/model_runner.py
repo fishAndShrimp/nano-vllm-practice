@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Optional
 
 import torch
 from transformers import Qwen3Config
@@ -21,15 +20,15 @@ class ModelRunner:
         hf_config: Qwen3Config,
         weights_dir: Path,
         kv_cache_manager: KVCacheManager,
-        dtype: Optional[torch.dtype] = None,
-        device: Optional[str] = None,
+        dtype: torch.dtype,
+        device: str,
     ):
         """ """
         self.hf_config = hf_config
         self.weights_dir = weights_dir
         self.kv_cache_manager = kv_cache_manager
-        self.dtype = torch.float16 if (dtype is None) else dtype
-        self.device = "cuda" if (device is None) else device
+        self.dtype = dtype
+        self.device = device
 
         self.model = QwenForCausalLM(hf_config)
         self.model.load_weights(self.weights_dir)
@@ -46,6 +45,9 @@ class ModelRunner:
     def step(
         self,
         scheduled_const: list[tuple[Sequence, int]],
+        k_cache_pools: list[torch.Tensor],
+        v_cache_pools: list[torch.Tensor],
+        block_tables: torch.Tensor,
     ):
         """ """
         if len(scheduled_const) <= 0:
@@ -83,9 +85,9 @@ class ModelRunner:
             idx_flatten=flatten,
             positions=positions,
             cu_seqlens=cu_seqlens,
-            k_cache_pool=None,
-            v_cache_pool=None,
-            block_tables=None,
+            k_cache_pools=k_cache_pools,
+            v_cache_pools=v_cache_pools,
+            block_tables=block_tables,
         )
 
         # (B,)

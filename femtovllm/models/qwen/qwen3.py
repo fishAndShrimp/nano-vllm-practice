@@ -1,5 +1,7 @@
 import collections
+import dataclasses
 from pathlib import Path
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -9,9 +11,18 @@ from tqdm import tqdm
 from transformers import Qwen3Config
 
 
+@dataclasses.dataclass
+class VarlenAttnMetadata:
+    positions: torch.Tensor
+    cu_seqlens: torch.Tensor
+    k_cache_pools: list[torch.Tensor]
+    v_cache_pools: list[torch.Tensor]
+    block_tables: torch.Tensor
+
+
 class QwenRotaryEmbedding(nn.Module):
     """
-    Qwen Rope
+    Qwen RoPE (Rotary Position Embedding)
     """
 
     def __init__(
@@ -26,41 +37,107 @@ class QwenRotaryEmbedding(nn.Module):
         if d_head % 2 != 0:
             raise ValueError(f"d_head must be even, now {d_head=}")
 
-        # (C//2)
+        # (D//2)
         inv_freq = torch.arange(d_head // 2, device=device).float()
         inv_freq = 2 * inv_freq / d_head
         inv_freq = (1.0 / base) ** (inv_freq)
 
-        # (T, C//2)
+        # (T, D//2)
         theta = torch.arange(max_seq_len, device=device).float()
         theta = theta[:, None] * inv_freq[None, :]
 
-        # (T, C)
+        # (T, D)
         theta = torch.cat((theta, theta), dim=-1)
 
-        # (T, C)
+        # (T, D)
         self.register_buffer("sin", torch.sin(theta), persistent=False)
         self.register_buffer("cos", torch.cos(theta), persistent=False)
 
     def forward(
         self,
         q_or_k: torch.Tensor,
-        position: int = None,
+        positions: int | torch.Tensor = None,
     ):
-        T = q_or_k.shape[-2]
+        """
+        Applies Rotary Position Embedding (RoPE) to the Query or Key tensor.
 
+        This method automatically routes the computation based on the dimensions of the
+        input tensor `q_or_k`, enforcing strict type checks for the `positions` argument.
+
+        1. Standard Padded Mode (4D)
+            - q_or_k shape: `(B, H, T, D)`
+            - positions: Must be `int` or `None`.
+                - If `None`: Rotates using positions `[0 : T]`.
+                - If `int` (e.g., p): Rotates using positions `[p : p + T]` (useful for decoding).
+
+        2. Varlen / FlashAttention Mode (3D)
+            - q_or_k shape: `(seqlen_total, H, D)`
+            - positions: Must be a 1D `torch.Tensor`.
+                - Shape `(seqlen_total,)` containing the exact absolute position IDs
+                  for each token in the flattened batch.
+
+        Args:
+            q_or_k (torch.Tensor): The input Query or Key tensor to rotate.
+            positions (int | torch.Tensor | None): The position index/indices.
+
+        Returns:
+            torch.Tensor: The rotated tensor, maintaining the exact same shape as `q_or_k`.
+
+        Raises:
+            RuntimeError: If the type of `positions` does not match the required type
+                          for the detected operating mode (3D vs 4D).
+        """
+
+        # (B, H, T, D)
+        # or (seqlen_total, H, D) varlen
+        is_varlen = q_or_k.dim() == 3
+
+        # [STEP: route checks]
+        if is_varlen:
+            required_positions_types = (torch.Tensor,)
+        else:
+            required_positions_types = (int, type(None))
+        if not isinstance(positions, required_positions_types):
+            raise RuntimeError(
+                f"{positions=} {required_positions_types=} {q_or_k.dim()=}"
+            )
+
+        # [STEP: (x, y) and (negative_y, x)]
         x_y = q_or_k
         x, y = x_y.chunk(2, dim=-1)
         ny_x = torch.cat((-y, x), dim=-1)
 
-        # (1, 1, T, C)
-        if position is not None:
-            w_sin = self.sin[position : position + T][None, None, ...]
-            w_cos = self.cos[position : position + T][None, None, ...]
+        # [STEP: pick sin and cos]
+        if is_varlen:
+            # (seqlen_total, D) varlen
+            w_sin = self.sin[positions]
+            w_cos = self.cos[positions]
+            # (seqlen_total, 1, D) varlen
+            w_sin = w_sin[:, None, :]
+            w_cos = w_cos[:, None, :]
         else:
-            w_sin = self.sin[:T][None, None, ...]
-            w_cos = self.cos[:T][None, None, ...]
+            _, _, T, _ = q_or_k.shape
 
+            # (T, D)
+            if isinstance(positions, int):
+                w_sin = self.sin[positions : positions + T]
+                w_cos = self.cos[positions : positions + T]
+            else:
+                w_sin = self.sin[:T]
+                w_cos = self.cos[:T]
+
+            # (1, 1, T, D)
+            w_sin = w_sin[None, None, ...]
+            w_cos = w_cos[None, None, ...]
+
+        # [STEP: broadcast]
+        # (B, H, T, D)
+        # *
+        # (1, 1, T, D)
+        # or
+        # (seqlen_total, H, D) varlen
+        # *
+        # (seqlen_total, 1, D) varlen
         return w_cos * x_y + w_sin * ny_x
 
 
@@ -110,12 +187,148 @@ class QwenSelfAttention(nn.Module):
 
         self.o_proj = nn.Linear(n_heads * d_head, d_model, bias=False)
 
+    def forward_varlen(
+        self,
+        x: torch.Tensor,
+        k_cache_pool: torch.Tensor,
+        v_cache_pool: torch.Tensor,
+        varlen_attn_metadata: VarlenAttnMetadata,
+    ) -> tuple[
+        torch.Tensor,
+        Optional[list[tuple[torch.Tensor, torch.Tensor]]],
+    ]:
+        """ """
+        B = len(varlen_attn_metadata.block_tables)
+        seqlen_total, C = x.shape
+
+        n_heads = self.n_heads
+        n_kv_heads = self.n_kv_heads
+        d_head = self.d_head
+        n_rep = self.n_rep
+
+        # (seqlen_total, H, D)
+        # no longer transpose
+        q = self.w_q(x).view(seqlen_total, n_heads, d_head)
+        k = self.w_k(x).view(seqlen_total, n_kv_heads, d_head)
+        v = self.w_v(x).view(seqlen_total, n_kv_heads, d_head)
+
+        q = self.q_norm(q)
+        k = self.k_norm(k)
+
+        q = self.rotary_embd(q, varlen_attn_metadata.positions)
+        k = self.rotary_embd(k, varlen_attn_metadata.positions)
+
+        attn = []
+        for batch in range(B):
+            begin = int(varlen_attn_metadata.cu_seqlens[batch])
+            end = int(varlen_attn_metadata.cu_seqlens[batch + 1])
+
+            block_table = varlen_attn_metadata.block_tables[batch]
+            _, block_size, _, _ = k_cache_pool.shape
+
+            # (T, H, D)
+            i_q = q[begin:end]
+
+            # (entire_length, H, D)
+            # reuse and append cache
+            # cat in entire_length (dim=0)
+            i_k = []
+            i_v = []
+
+            remaining_cache = int(varlen_attn_metadata.positions[begin])
+            p_begin = begin
+            for block_index in block_table.tolist():
+                if block_index < 0:
+                    break
+                if p_begin >= end:
+                    break
+
+                if remaining_cache < block_size:
+                    # current block has empty slots
+                    # start to cache more
+                    num_new_tokens = min(
+                        # empty slots in current block
+                        block_size - remaining_cache,
+                        # remaining new kv
+                        end - p_begin,
+                    )
+                    k_cache_pool[
+                        block_index, remaining_cache : remaining_cache + num_new_tokens
+                    ] = k[p_begin : p_begin + num_new_tokens]
+                    v_cache_pool[
+                        block_index, remaining_cache : remaining_cache + num_new_tokens
+                    ] = v[p_begin : p_begin + num_new_tokens]
+
+                    remaining_cache += num_new_tokens
+                    p_begin += num_new_tokens
+
+                    i_k.append(k_cache_pool[block_index, :remaining_cache])
+                    i_v.append(v_cache_pool[block_index, :remaining_cache])
+                else:
+                    i_k.append(k_cache_pool[block_index])
+                    i_v.append(v_cache_pool[block_index])
+                remaining_cache -= block_size
+
+            i_k = torch.cat(i_k, dim=0)
+            i_v = torch.cat(i_v, dim=0)
+
+            # (entire_length, H, D)
+            # replicate kv
+            i_k_rep = (
+                i_k.unsqueeze(1)
+                .expand(-1, n_rep, n_kv_heads, d_head)
+                .reshape(-1, n_rep * n_kv_heads, d_head)
+            )
+            i_v_rep = (
+                i_v.unsqueeze(1)
+                .expand(-1, n_rep, n_kv_heads, d_head)
+                .reshape(-1, n_rep * n_kv_heads, d_head)
+            )
+
+            # (T, H, D)
+            T, _, _ = i_q.shape
+
+            # (H, T, D)
+            i_q = i_q.transpose(0, 1)
+            # (H, entire_length, D)
+            i_k_rep = i_k_rep.transpose(0, 1)
+            i_v_rep = i_v_rep.transpose(0, 1)
+
+            # (H, T, D)
+            i_attn = F.scaled_dot_product_attention(
+                i_q,
+                i_k_rep,
+                i_v_rep,
+                is_causal=(T > 1),
+                dropout_p=(self.dropout_p if self.training else 0.0),
+            )
+            # (T, C) = (T, H*D)
+            i_attn = i_attn.transpose(0, 1).contiguous().view(T, n_heads * d_head)
+
+            attn.append(i_attn)
+
+        # (seqlen_total, C)
+        attn = torch.cat(attn, dim=0)
+
+        return self.o_proj(attn), None
+
     def forward(
         self,
         x: torch.Tensor,
-        kv_cache=None,
+        kv_cache: tuple[torch.Tensor, torch.Tensor] = None,
+        k_cache_pool: torch.Tensor = None,
+        v_cache_pool: torch.Tensor = None,
+        varlen_attn_metadata: VarlenAttnMetadata = None,
     ):
         """ """
+        if varlen_attn_metadata is not None:
+            return self.forward_varlen(
+                x=x,
+                k_cache_pool=k_cache_pool,
+                v_cache_pool=v_cache_pool,
+                varlen_attn_metadata=varlen_attn_metadata,
+            )
+
         B, T, C = x.shape
         n_heads = self.n_heads
         n_kv_heads = self.n_kv_heads
@@ -140,12 +353,16 @@ class QwenSelfAttention(nn.Module):
         q = self.rotary_embd(q, position)
         k = self.rotary_embd(k, position)
 
+        # (B, H, entire_length, D)
         if kv_cache is not None:
             k = torch.cat((k_past, k), dim=-2)
             v = torch.cat((v_past, v), dim=-2)
 
-        # [CRITICAL -1]
+        # [CRITICAL auto -1 length]
         # seqlen is no longer T
+        # e.g. When decoding,
+        # q.T is still 1,
+        # but k.entire_length and v.entire_length is (kv_cache_length + 1)
         k_rep = (
             k.unsqueeze(2)
             .expand(B, n_kv_heads, n_rep, -1, d_head)
@@ -240,14 +457,20 @@ class QwenDecoderLayer(nn.Module):
     def forward(
         self,
         x,
-        kv_cache=None,
+        kv_cache: tuple[torch.Tensor, torch.Tensor] = None,
+        k_cache_pool: torch.Tensor = None,
+        v_cache_pool: torch.Tensor = None,
+        varlen_attn_metadata: VarlenAttnMetadata = None,
     ):
         """ """
         # (B, T, C)
-        #    (T, C) varlen
+        # or (seqlen_total, C) varlen
         y, kv_cache = self.sa(
             self.input_layernorm(x),
             kv_cache=kv_cache,
+            k_cache_pool=k_cache_pool,
+            v_cache_pool=v_cache_pool,
+            varlen_attn_metadata=varlen_attn_metadata,
         )
         x = x + self.dropout_sa(y)
 
@@ -297,28 +520,54 @@ class QwenModel(nn.Module):
         self,
         idx,
         all_kv_cache: list[tuple[torch.Tensor, torch.Tensor]] = None,
+        varlen_attn_metadata: VarlenAttnMetadata = None,
     ):
         """
         - all_kv_cache: legacy list[(k,v)] mechanism
         """
         # (B, T, C)
-        #    (T, C) varlen
+        # or (seqlen_total, C) varlen
         x = self.embed_tokens(idx)
 
         if all_kv_cache is None:
             all_kv_cache = [None for _ in self.layers]
 
         for i, layer in enumerate(self.layers):
+            k_cache_pool = (
+                None
+                if (varlen_attn_metadata is None)
+                else varlen_attn_metadata.k_cache_pools[i]
+            )
+            v_cache_pool = (
+                None
+                if (varlen_attn_metadata is None)
+                else varlen_attn_metadata.v_cache_pools[i]
+            )
+
             x, all_kv_cache[i] = layer(
                 x,
                 kv_cache=all_kv_cache[i],
+                k_cache_pool=k_cache_pool,
+                v_cache_pool=v_cache_pool,
+                varlen_attn_metadata=varlen_attn_metadata,
             )
 
         return self.norm(x), all_kv_cache
 
 
 class QwenForCausalLM(nn.Module):
-    """ """
+    """
+    Standard Qwen Causal LM wrapper,
+    containing the base model and the LM head.
+
+    NOTE FOR ENGINE DEVELOPERS:
+    For high-performance varlen (flattened) inference,
+    do NOT use this class's `forward` method directly.
+
+    Instead, call `self.model` to get hidden states,
+    extract only the tokens you need (e.g., the last token of each sequence),
+    and apply `self.lm_head` manually to save computation.
+    """
 
     def __init__(self, config: Qwen3Config):
         super().__init__()
@@ -334,8 +583,21 @@ class QwenForCausalLM(nn.Module):
     def forward(
         self,
         idx,
-        all_kv_cache=None,
+        all_kv_cache: list[tuple[torch.Tensor, torch.Tensor]] = None,
     ):
+        """
+        Standard forward pass for padded `(B, T)` inputs.
+
+        WARNING: This method does NOT support varlen (flattened) inputs.
+
+        Applying the `lm_head` to an entire `(seqlen_total, C)` flattened tensor,
+        introduces massive computational waste,
+        as we typically only need logits for the final token of each sequence.
+
+        For varlen inference,
+        use the base `self.model` instead.
+        """
+
         # (B, T, C)
         x, all_kv_cache = self.model(
             idx,
@@ -353,34 +615,57 @@ class QwenForCausalLM(nn.Module):
         idx_flatten: torch.Tensor,
         positions: torch.Tensor,
         cu_seqlens: torch.Tensor,
-        k_cache_pool: torch.Tensor,
-        v_cache_pool: torch.Tensor,
+        k_cache_pools: list[torch.Tensor],
+        v_cache_pools: list[torch.Tensor],
         block_tables: torch.Tensor,
+        fake: bool = False,
     ):
         """
         - input.shape: (seqlen_total,)
         - output.shape: (B, vocab_size)
         - B: len(cu_seqlens) - 1
         """
-        return self._forward_varlen_fake(
-            idx_flatten,
-            positions,
-            cu_seqlens,
-            k_cache_pool,
-            v_cache_pool,
-            block_tables,
+        if fake:
+            return self._forward_varlen_fake(
+                idx_flatten=idx_flatten,
+                cu_seqlens=cu_seqlens,
+            )
+
+        varlen_attn_metadata = VarlenAttnMetadata(
+            positions=positions,
+            cu_seqlens=cu_seqlens,
+            k_cache_pools=k_cache_pools,
+            v_cache_pools=v_cache_pools,
+            block_tables=block_tables,
         )
+        hidden, _ = self.model(
+            idx=idx_flatten,
+            varlen_attn_metadata=varlen_attn_metadata,
+        )
+
+        hidden_next = hidden[cu_seqlens[1:] - 1]
+        logits_next: torch.Tensor = self.lm_head(hidden_next)
+
+        return logits_next
 
     def _forward_varlen_fake(
         self,
         # (T)
         idx_flatten: torch.Tensor,
-        positions: torch.Tensor,
         cu_seqlens: torch.Tensor,
-        k_cache_pool: torch.Tensor,
-        v_cache_pool: torch.Tensor,
-        block_tables: torch.Tensor,
     ):
+        """
+        WARNING: Temporary workaround to fast verify engine logic.
+
+        This function reconstructs the flattened 1D input back into a padded `(B, T)` shape.
+
+        CRITICAL LIMITATION:
+        Because the `(B, T)` format fundamentally cannot handle variable-length historical KV caches,
+        this implementation ONLY works for the VERY FIRST chunked prefill (when KV cache is empty).
+        Any subsequent chunked prefills or decode steps will fail, as appending to unaligned,
+        variable-length historical KV caches breaks the dense tensor shape.
+        """
+
         _PAD_TOKEN = "<|endoftext|>"
         _PAD_TOKEN_ID = 151643
 
