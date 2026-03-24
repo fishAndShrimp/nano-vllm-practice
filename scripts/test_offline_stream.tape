@@ -32,7 +32,10 @@ Sleep 500ms
 Enter
 
 # Buffer time for model weight loading & initialization
+# 🎬 Magic Cut: Completely hide the 8s loading phase to prevent UI flickering
+Hide
 Sleep 8s
+Show
 
 # Observation window for the Rich Live streaming output
 Sleep 15s
