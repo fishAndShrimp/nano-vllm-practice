@@ -37,8 +37,18 @@ class CoreEngine:
         max_tokens = int(max_tokens)
         max_tokens_per_seq = int(max_tokens_per_seq)
 
+        ##### [STEP: block]
         num_blocks = int(num_blocks)
+
+        # static block_size
         block_size = int(block_size)
+        if block_size != 64:
+            raise NotImplementedError(
+                f"Dynamic block sizes are not yet supported (got {block_size}). "
+                "Please set block_size=64 "
+                "to match the hardware-aligned tile size of the custom GEMM/GEMV kernels."
+            )
+        ##### [STEP: block]
 
         if not isinstance(hf_config, Qwen3Config):
             raise TypeError(f"{type(hf_config)=}")

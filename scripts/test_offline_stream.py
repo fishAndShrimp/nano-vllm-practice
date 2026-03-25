@@ -6,6 +6,7 @@ from rich.live import Live
 from rich.panel import Panel
 from transformers import Qwen3Config
 
+import femtovllm
 from femtovllm import LLM, SamplingParams
 
 # ==========================================
@@ -43,12 +44,13 @@ weights_dir = (
 )
 
 
+femtovllm._DEV.varlen_attn_impl = "pytorch"
 llm = LLM(
     max_seqs=10,
     max_tokens=1000,
     max_tokens_per_seq=100,
     num_blocks=200,
-    block_size=100,
+    block_size=64,
     hf_config=Qwen3Config.from_pretrained(weights_dir),
     weights_dir=weights_dir,
     dtype=torch.bfloat16,
