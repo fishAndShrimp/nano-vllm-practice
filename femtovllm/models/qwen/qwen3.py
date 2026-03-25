@@ -10,6 +10,8 @@ from safetensors import safe_open
 from tqdm import tqdm
 from transformers import Qwen3Config
 
+import femtovllm
+
 
 @dataclasses.dataclass
 class VarlenAttnMetadata:
@@ -159,6 +161,7 @@ class QwenSelfAttention(nn.Module):
         config: Qwen3Config = None,
     ):
         super().__init__()
+        self.varlen_attn_impl = femtovllm._DEV.varlen_attn_impl
 
         if d_model % n_heads != 0:
             raise ValueError(f"{(d_model % n_heads)=}")
@@ -187,16 +190,147 @@ class QwenSelfAttention(nn.Module):
 
         self.o_proj = nn.Linear(n_heads * d_head, d_model, bias=False)
 
-    def forward_varlen(
+    def forward_varlen_custom_gemm(
         self,
         x: torch.Tensor,
         k_cache_pool: torch.Tensor,
         v_cache_pool: torch.Tensor,
         varlen_attn_metadata: VarlenAttnMetadata,
-    ) -> tuple[
-        torch.Tensor,
-        Optional[list[tuple[torch.Tensor, torch.Tensor]]],
-    ]:
+    ):
+        """ """
+        B = len(varlen_attn_metadata.block_tables)
+        seqlen_total, C = x.shape
+
+        n_heads = self.n_heads
+        n_kv_heads = self.n_kv_heads
+        d_head = self.d_head
+        n_rep = self.n_rep
+
+        # (seqlen_total, H, D)
+        # no longer transpose
+        q = self.w_q(x).view(seqlen_total, n_heads, d_head)
+        k = self.w_k(x).view(seqlen_total, n_kv_heads, d_head)
+        v = self.w_v(x).view(seqlen_total, n_kv_heads, d_head)
+
+        q = self.q_norm(q)
+        k = self.k_norm(k)
+
+        q = self.rotary_embd(q, varlen_attn_metadata.positions)
+        k = self.rotary_embd(k, varlen_attn_metadata.positions)
+
+        attn = []
+        for batch in range(B):
+            begin = int(varlen_attn_metadata.cu_seqlens[batch])
+            end = int(varlen_attn_metadata.cu_seqlens[batch + 1])
+
+            block_table = varlen_attn_metadata.block_tables[batch]
+            _, block_size, _, _ = k_cache_pool.shape
+
+            # (T, H, D)
+            i_q = q[begin:end]
+
+            # (entire_length, H, D)
+            # reuse and append cache
+            # cat in entire_length (dim=0)
+            i_k = []
+            i_v = []
+
+            remaining_cache = int(varlen_attn_metadata.positions[begin])
+            p_begin = begin
+            for block_index in block_table.tolist():
+                if block_index < 0:
+                    break
+                if p_begin >= end:
+                    break
+
+                if remaining_cache < block_size:
+                    # current block has empty slots
+                    # start to cache more
+                    num_new_tokens = min(
+                        # empty slots in current block
+                        block_size - remaining_cache,
+                        # remaining new kv
+                        end - p_begin,
+                    )
+                    k_cache_pool[
+                        block_index, remaining_cache : remaining_cache + num_new_tokens
+                    ] = k[p_begin : p_begin + num_new_tokens]
+                    v_cache_pool[
+                        block_index, remaining_cache : remaining_cache + num_new_tokens
+                    ] = v[p_begin : p_begin + num_new_tokens]
+
+                    remaining_cache += num_new_tokens
+                    p_begin += num_new_tokens
+
+                    i_k.append(k_cache_pool[block_index, :remaining_cache])
+                    i_v.append(v_cache_pool[block_index, :remaining_cache])
+                else:
+                    i_k.append(k_cache_pool[block_index])
+                    i_v.append(v_cache_pool[block_index])
+                remaining_cache -= block_size
+
+            i_k = torch.cat(i_k, dim=0)
+            i_v = torch.cat(i_v, dim=0)
+
+            # (entire_length, H, D)
+            # replicate kv
+            # (entire_length, n_kv_heads, n_rep, D)
+            #
+            # [CRITICAL: The Replica Manner for GQA]
+            # We must replicate the SAME kv_head `n_rep` times consecutively so that
+            # the first `n_rep` query heads share the exact same kv_head.
+            #
+            # Example: 4 Q_heads, 2 KV_heads (n_rep = 2)
+            # CORRECT memory layout after reshape: [KV0, KV0, KV1, KV1]
+            #   -> Q0 matches KV0, Q1 matches KV0 | Q2 matches KV1, Q3 matches KV1
+            #
+            # WRONG layout (if unsqueeze(1) was used): [KV0, KV1, KV0, KV1]
+            #   -> Q1 would wrongly match KV1, causing severe feature mismatch.
+            i_k_rep = (
+                i_k.unsqueeze(2)
+                .expand(-1, n_kv_heads, n_rep, d_head)
+                .reshape(-1, n_kv_heads * n_rep, d_head)
+            )
+            i_v_rep = (
+                i_v.unsqueeze(2)
+                .expand(-1, n_kv_heads, n_rep, d_head)
+                .reshape(-1, n_kv_heads * n_rep, d_head)
+            )
+
+            # (T, H, D)
+            T, _, _ = i_q.shape
+
+            # (H, T, D)
+            i_q = i_q.transpose(0, 1)
+            # (H, entire_length, D)
+            i_k_rep = i_k_rep.transpose(0, 1)
+            i_v_rep = i_v_rep.transpose(0, 1)
+
+            # (H, T, D)
+            i_attn = F.scaled_dot_product_attention(
+                i_q,
+                i_k_rep,
+                i_v_rep,
+                is_causal=(T > 1),
+                dropout_p=(self.dropout_p if self.training else 0.0),
+            )
+            # (T, C) = (T, H*D)
+            i_attn = i_attn.transpose(0, 1).contiguous().view(T, n_heads * d_head)
+
+            attn.append(i_attn)
+
+        # (seqlen_total, C)
+        attn = torch.cat(attn, dim=0)
+
+        return self.o_proj(attn), None
+
+    def forward_varlen_pytorch(
+        self,
+        x: torch.Tensor,
+        k_cache_pool: torch.Tensor,
+        v_cache_pool: torch.Tensor,
+        varlen_attn_metadata: VarlenAttnMetadata,
+    ):
         """ """
         B = len(varlen_attn_metadata.block_tables)
         seqlen_total, C = x.shape
@@ -331,15 +465,29 @@ class QwenSelfAttention(nn.Module):
         k_cache_pool: torch.Tensor = None,
         v_cache_pool: torch.Tensor = None,
         varlen_attn_metadata: VarlenAttnMetadata = None,
-    ):
+    ) -> tuple[
+        torch.Tensor,
+        Optional[list[tuple[torch.Tensor, torch.Tensor]]],
+    ]:
         """ """
         if varlen_attn_metadata is not None:
-            return self.forward_varlen(
-                x=x,
-                k_cache_pool=k_cache_pool,
-                v_cache_pool=v_cache_pool,
-                varlen_attn_metadata=varlen_attn_metadata,
-            )
+            if self.varlen_attn_impl == "custom_gemm":
+                return self.forward_varlen_custom_gemm(
+                    x=x,
+                    k_cache_pool=k_cache_pool,
+                    v_cache_pool=v_cache_pool,
+                    varlen_attn_metadata=varlen_attn_metadata,
+                )
+
+            if self.varlen_attn_impl == "pytorch":
+                return self.forward_varlen_pytorch(
+                    x=x,
+                    k_cache_pool=k_cache_pool,
+                    v_cache_pool=v_cache_pool,
+                    varlen_attn_metadata=varlen_attn_metadata,
+                )
+
+            raise NotImplementedError(f"{self.varlen_attn_impl=}")
 
         B, T, C = x.shape
         n_heads = self.n_heads
