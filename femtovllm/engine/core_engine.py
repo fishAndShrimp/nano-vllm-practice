@@ -132,8 +132,8 @@ class CoreEngine:
 
         kv_cache_pool_shape = (
             num_blocks,
-            block_size,
             n_kv_heads,
+            block_size,
             d_head,
         )
 

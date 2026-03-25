@@ -208,6 +208,19 @@ class QwenSelfAttention(nn.Module):
 
         # (seqlen_total, H, D)
         # no longer transpose
+        # ========================================================================
+        # [CRITICAL: Optimal Memory Dataflow for Varlen Attention]
+        # To eliminate memory movement overhead, we strictly defer any transpose
+        # operations until the final caching stage. The elegant dataflow is:
+        #
+        # 1. Projection: Linear layer outputs contiguous (seqlen_flatten, H * D).
+        # 2. Reshape: Zero-copy `.view()` into (seqlen_flatten, H, D).
+        # 3. RoPE: Applied in-place on (seqlen_flatten, H, D) without moving memory.
+        # 4. Caching (Final Destination): We only transpose at the exact moment of
+        #    writing into the Paged KV Cache `[num_blocks, n_kv_heads, block_size, d_head]`.
+        #    This allows PyTorch's underlying `copy_()` to fuse the memory rearrangement
+        #    into a single step, avoiding expensive `.contiguous()` allocations.
+        # ========================================================================
         q = self.w_q(x).view(seqlen_total, n_heads, d_head)
         k = self.w_k(x).view(seqlen_total, n_kv_heads, d_head)
         v = self.w_v(x).view(seqlen_total, n_kv_heads, d_head)
@@ -224,14 +237,17 @@ class QwenSelfAttention(nn.Module):
             end = int(varlen_attn_metadata.cu_seqlens[batch + 1])
 
             block_table = varlen_attn_metadata.block_tables[batch]
-            _, block_size, _, _ = k_cache_pool.shape
+            _, _, block_size, _ = k_cache_pool.shape
 
             # (T, H, D)
             i_q = q[begin:end]
+            T, _, _ = i_q.shape
+            # (H, T, D)
+            i_q = i_q.transpose(0, 1)
 
-            # (entire_length, H, D)
+            # (H, kv_len, D)
             # reuse and append cache
-            # cat in entire_length (dim=0)
+            # cat in kv_len (dim=1)
             i_k = []
             i_v = []
 
@@ -252,29 +268,42 @@ class QwenSelfAttention(nn.Module):
                         # remaining new kv
                         end - p_begin,
                     )
+
+                    # (T, n_kv_heads, D)
+                    # transpose
+                    # (n_kv_heads, T, D)
                     k_cache_pool[
-                        block_index, remaining_cache : remaining_cache + num_new_tokens
-                    ] = k[p_begin : p_begin + num_new_tokens]
+                        block_index,
+                        :,
+                        remaining_cache : remaining_cache + num_new_tokens,
+                    ] = k[p_begin : p_begin + num_new_tokens].transpose(0, 1)
                     v_cache_pool[
-                        block_index, remaining_cache : remaining_cache + num_new_tokens
-                    ] = v[p_begin : p_begin + num_new_tokens]
+                        block_index,
+                        :,
+                        remaining_cache : remaining_cache + num_new_tokens,
+                    ] = v[p_begin : p_begin + num_new_tokens].transpose(0, 1)
 
                     remaining_cache += num_new_tokens
                     p_begin += num_new_tokens
 
-                    i_k.append(k_cache_pool[block_index, :remaining_cache])
-                    i_v.append(v_cache_pool[block_index, :remaining_cache])
+                    i_k.append(k_cache_pool[block_index, :, :remaining_cache])
+                    i_v.append(v_cache_pool[block_index, :, :remaining_cache])
                 else:
                     i_k.append(k_cache_pool[block_index])
                     i_v.append(v_cache_pool[block_index])
                 remaining_cache -= block_size
 
-            i_k = torch.cat(i_k, dim=0)
-            i_v = torch.cat(i_v, dim=0)
+            # (n_kv_heads, T, D)
+            # cat
+            # (n_kv_heads, kv_len, D)
+            i_k = torch.cat(i_k, dim=1)
+            i_v = torch.cat(i_v, dim=1)
 
-            # (entire_length, H, D)
+            # (n_kv_heads, kv_len, D)
             # replicate kv
-            # (entire_length, n_kv_heads, n_rep, D)
+            # (n_kv_heads, n_rep, kv_len, D)
+            # reshape
+            # (H, kv_len, D)
             #
             # [CRITICAL: The Replica Manner for GQA]
             # We must replicate the SAME kv_head `n_rep` times consecutively so that
@@ -284,31 +313,24 @@ class QwenSelfAttention(nn.Module):
             # CORRECT memory layout after reshape: [KV0, KV0, KV1, KV1]
             #   -> Q0 matches KV0, Q1 matches KV0 | Q2 matches KV1, Q3 matches KV1
             #
-            # WRONG layout (if unsqueeze(1) was used): [KV0, KV1, KV0, KV1]
+            # WRONG layout (if unsqueeze(0) was used): [KV0, KV1, KV0, KV1]
             #   -> Q1 would wrongly match KV1, causing severe feature mismatch.
             i_k_rep = (
-                i_k.unsqueeze(2)
-                .expand(-1, n_kv_heads, n_rep, d_head)
-                .reshape(-1, n_kv_heads * n_rep, d_head)
+                i_k.unsqueeze(1)
+                .expand(n_kv_heads, n_rep, -1, d_head)
+                .reshape(n_kv_heads * n_rep, -1, d_head)
             )
             i_v_rep = (
-                i_v.unsqueeze(2)
-                .expand(-1, n_kv_heads, n_rep, d_head)
-                .reshape(-1, n_kv_heads * n_rep, d_head)
+                i_v.unsqueeze(1)
+                .expand(n_kv_heads, n_rep, -1, d_head)
+                .reshape(n_kv_heads * n_rep, -1, d_head)
             )
-
-            # (T, H, D)
-            T, _, _ = i_q.shape
-
-            # (H, T, D)
-            i_q = i_q.transpose(0, 1)
-            # (H, entire_length, D)
-            i_k_rep = i_k_rep.transpose(0, 1)
-            i_v_rep = i_v_rep.transpose(0, 1)
 
             # (H, T, D)
             i_attn = F.scaled_dot_product_attention(
+                # (H, T, D)
                 i_q,
+                # (H, kv_len, D)
                 i_k_rep,
                 i_v_rep,
                 is_causal=(T > 1),
@@ -342,6 +364,19 @@ class QwenSelfAttention(nn.Module):
 
         # (seqlen_total, H, D)
         # no longer transpose
+        # ========================================================================
+        # [CRITICAL: Optimal Memory Dataflow for Varlen Attention]
+        # To eliminate memory movement overhead, we strictly defer any transpose
+        # operations until the final caching stage. The elegant dataflow is:
+        #
+        # 1. Projection: Linear layer outputs contiguous (seqlen_flatten, H * D).
+        # 2. Reshape: Zero-copy `.view()` into (seqlen_flatten, H, D).
+        # 3. RoPE: Applied in-place on (seqlen_flatten, H, D) without moving memory.
+        # 4. Caching (Final Destination): We only transpose at the exact moment of
+        #    writing into the Paged KV Cache `[num_blocks, n_kv_heads, block_size, d_head]`.
+        #    This allows PyTorch's underlying `copy_()` to fuse the memory rearrangement
+        #    into a single step, avoiding expensive `.contiguous()` allocations.
+        # ========================================================================
         q = self.w_q(x).view(seqlen_total, n_heads, d_head)
         k = self.w_k(x).view(seqlen_total, n_kv_heads, d_head)
         v = self.w_v(x).view(seqlen_total, n_kv_heads, d_head)
@@ -358,14 +393,17 @@ class QwenSelfAttention(nn.Module):
             end = int(varlen_attn_metadata.cu_seqlens[batch + 1])
 
             block_table = varlen_attn_metadata.block_tables[batch]
-            _, block_size, _, _ = k_cache_pool.shape
+            _, _, block_size, _ = k_cache_pool.shape
 
             # (T, H, D)
             i_q = q[begin:end]
+            T, _, _ = i_q.shape
+            # (H, T, D)
+            i_q = i_q.transpose(0, 1)
 
-            # (entire_length, H, D)
+            # (H, kv_len, D)
             # reuse and append cache
-            # cat in entire_length (dim=0)
+            # cat in kv_len (dim=1)
             i_k = []
             i_v = []
 
@@ -386,29 +424,42 @@ class QwenSelfAttention(nn.Module):
                         # remaining new kv
                         end - p_begin,
                     )
+
+                    # (T, n_kv_heads, D)
+                    # transpose
+                    # (n_kv_heads, T, D)
                     k_cache_pool[
-                        block_index, remaining_cache : remaining_cache + num_new_tokens
-                    ] = k[p_begin : p_begin + num_new_tokens]
+                        block_index,
+                        :,
+                        remaining_cache : remaining_cache + num_new_tokens,
+                    ] = k[p_begin : p_begin + num_new_tokens].transpose(0, 1)
                     v_cache_pool[
-                        block_index, remaining_cache : remaining_cache + num_new_tokens
-                    ] = v[p_begin : p_begin + num_new_tokens]
+                        block_index,
+                        :,
+                        remaining_cache : remaining_cache + num_new_tokens,
+                    ] = v[p_begin : p_begin + num_new_tokens].transpose(0, 1)
 
                     remaining_cache += num_new_tokens
                     p_begin += num_new_tokens
 
-                    i_k.append(k_cache_pool[block_index, :remaining_cache])
-                    i_v.append(v_cache_pool[block_index, :remaining_cache])
+                    i_k.append(k_cache_pool[block_index, :, :remaining_cache])
+                    i_v.append(v_cache_pool[block_index, :, :remaining_cache])
                 else:
                     i_k.append(k_cache_pool[block_index])
                     i_v.append(v_cache_pool[block_index])
                 remaining_cache -= block_size
 
-            i_k = torch.cat(i_k, dim=0)
-            i_v = torch.cat(i_v, dim=0)
+            # (n_kv_heads, T, D)
+            # cat
+            # (n_kv_heads, kv_len, D)
+            i_k = torch.cat(i_k, dim=1)
+            i_v = torch.cat(i_v, dim=1)
 
-            # (entire_length, H, D)
+            # (n_kv_heads, kv_len, D)
             # replicate kv
-            # (entire_length, n_kv_heads, n_rep, D)
+            # (n_kv_heads, n_rep, kv_len, D)
+            # reshape
+            # (H, kv_len, D)
             #
             # [CRITICAL: The Replica Manner for GQA]
             # We must replicate the SAME kv_head `n_rep` times consecutively so that
@@ -418,31 +469,24 @@ class QwenSelfAttention(nn.Module):
             # CORRECT memory layout after reshape: [KV0, KV0, KV1, KV1]
             #   -> Q0 matches KV0, Q1 matches KV0 | Q2 matches KV1, Q3 matches KV1
             #
-            # WRONG layout (if unsqueeze(1) was used): [KV0, KV1, KV0, KV1]
+            # WRONG layout (if unsqueeze(0) was used): [KV0, KV1, KV0, KV1]
             #   -> Q1 would wrongly match KV1, causing severe feature mismatch.
             i_k_rep = (
-                i_k.unsqueeze(2)
-                .expand(-1, n_kv_heads, n_rep, d_head)
-                .reshape(-1, n_kv_heads * n_rep, d_head)
+                i_k.unsqueeze(1)
+                .expand(n_kv_heads, n_rep, -1, d_head)
+                .reshape(n_kv_heads * n_rep, -1, d_head)
             )
             i_v_rep = (
-                i_v.unsqueeze(2)
-                .expand(-1, n_kv_heads, n_rep, d_head)
-                .reshape(-1, n_kv_heads * n_rep, d_head)
+                i_v.unsqueeze(1)
+                .expand(n_kv_heads, n_rep, -1, d_head)
+                .reshape(n_kv_heads * n_rep, -1, d_head)
             )
-
-            # (T, H, D)
-            T, _, _ = i_q.shape
-
-            # (H, T, D)
-            i_q = i_q.transpose(0, 1)
-            # (H, entire_length, D)
-            i_k_rep = i_k_rep.transpose(0, 1)
-            i_v_rep = i_v_rep.transpose(0, 1)
 
             # (H, T, D)
             i_attn = F.scaled_dot_product_attention(
+                # (H, T, D)
                 i_q,
+                # (H, kv_len, D)
                 i_k_rep,
                 i_v_rep,
                 is_causal=(T > 1),
@@ -513,7 +557,7 @@ class QwenSelfAttention(nn.Module):
         q = self.rotary_embd(q, position)
         k = self.rotary_embd(k, position)
 
-        # (B, H, entire_length, D)
+        # (B, H, kv_len, D)
         if kv_cache is not None:
             k = torch.cat((k_past, k), dim=-2)
             v = torch.cat((v_past, v), dim=-2)
@@ -522,7 +566,7 @@ class QwenSelfAttention(nn.Module):
         # seqlen is no longer T
         # e.g. When decoding,
         # q.T is still 1,
-        # but k.entire_length and v.entire_length is (kv_cache_length + 1)
+        # but k.kv_len and v.kv_len is (kv_past_len + 1)
         k_rep = (
             k.unsqueeze(2)
             .expand(B, n_kv_heads, n_rep, -1, d_head)
