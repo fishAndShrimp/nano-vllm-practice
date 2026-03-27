@@ -71,7 +71,7 @@ class ModelRunner:
         )
         positions = torch.tensor(
             positions,
-            dtype=torch.long,
+            dtype=torch.int32,
             device=self.device,
         )
         cu_seqlens = torch.tensor(

@@ -219,3 +219,44 @@ i_block_table = [x for x in block_tables[i] if (x > 0)]
 
 ---
 
+## gy and seq_idx in paged attn
+
+```cpp
+CORRECT:
+    auto position = positions[gy];
+
+ERROR:
+    auto position = positions[seq_idx];
+```
+
+---
+
+## NEVER use (is_causal=True) in SDPA F.scaled_dot_product_attention
+
+```python
+    i_sub_ref_attn = F.scaled_dot_product_attention(
+        i_q,
+        i_k,
+        i_v,
+        # # [BUG]
+        # # when (q_len != kv_len) and (q_len > 1)
+        # # always use attn_mask
+        # is_causal=True,
+        enable_gqa=True,
+        attn_mask=gen_right_bottom_mask(q_len, kv_len),
+    )
+```
+
+```python
+def gen_right_bottom_mask(q_len, kv_len):
+    """ """
+    q_pos = torch.arange(q_len) - q_len + kv_len
+    kv_pos = torch.arange(kv_len)
+    mask = q_pos[:, None] >= kv_pos[None, :]
+    print("[ MASK ]")
+    print(mask)
+    return mask.to(device="cuda")
+```
+
+---
+

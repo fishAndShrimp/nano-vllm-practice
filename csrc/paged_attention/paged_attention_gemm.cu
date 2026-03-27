@@ -22,7 +22,8 @@ __global__ void PagedAttentionGemmKernel(
     int num_pages_per_seq,
     const int32_t* __restrict__ kv_lens,
     int dim_d,
-    int n_rep
+    int n_rep,
+    const int32_t* __restrict__ positions
 ) {
     auto seq_idx = blockIdx.y;
     auto q_begin = cu_seqlens[seq_idx];
@@ -38,6 +39,11 @@ __global__ void PagedAttentionGemmKernel(
     auto page_table =
         kv_page_tables + num_pages_per_seq * seq_idx;
     auto kv_len = kv_lens[seq_idx];
+
+    auto position = kv_len;
+    if (gy < q_end) {
+        position = positions[gy];
+    }
 
     auto head_idx = blockIdx.z;
     auto kv_head_idx = head_idx / n_rep;
@@ -166,7 +172,7 @@ __global__ void PagedAttentionGemmKernel(
 
             // TODO casual mask
             auto gx = kTileSize * tile_idx + lx;
-            if (gx < kv_len) {
+            if (gx < kv_len && gx <= position) {
                 sw[lx] = exp(sw[lx] - m_new);
             } else {
                 sw[lx] = 0.0;
@@ -253,7 +259,8 @@ torch::Tensor PagedAttentionGemmCuda(
     torch::Tensor cu_seqlens,
     int q_len_max,
     torch::Tensor kv_page_tables,
-    torch::Tensor kv_lens
+    torch::Tensor kv_lens,
+    torch::Tensor positions
 ) {
     TORCH_CHECK_EQ(q.is_cuda(), true);
     TORCH_CHECK_EQ(k_pool.is_cuda(), true);
@@ -267,6 +274,12 @@ torch::Tensor PagedAttentionGemmCuda(
         kv_page_tables.scalar_type(),
         torch::kInt32
     );
+    TORCH_CHECK_EQ(kv_lens.scalar_type(), torch::kInt32);
+    TORCH_CHECK_EQ(positions.scalar_type(), torch::kInt32);
+
+    int num_seqs = cu_seqlens.numel() - 1;
+    TORCH_CHECK_EQ(num_seqs, kv_page_tables.size(0));
+    TORCH_CHECK_EQ(num_seqs, kv_lens.size(0));
 
     TORCH_CHECK_EQ(q.dim(), 3);
     TORCH_CHECK_EQ(k_pool.dim(), 4);
@@ -282,6 +295,7 @@ torch::Tensor PagedAttentionGemmCuda(
     int q_len_flatten = q.size(1);
     int dim_d = q.size(2);
     TORCH_CHECK_LE(dim_d, kDimHead);
+    TORCH_CHECK_EQ(q_len_flatten, positions.numel());
 
     int n_kv_heads = k_pool.size(1);
     TORCH_CHECK_EQ(dim_h % n_kv_heads, 0);
@@ -291,8 +305,6 @@ torch::Tensor PagedAttentionGemmCuda(
         {dim_h, q_len_flatten, dim_d},
         q.options()
     );
-
-    int num_seqs = cu_seqlens.numel() - 1;
 
     AT_DISPATCH_FLOATING_TYPES_AND2(
         at::ScalarType::Half,
@@ -320,7 +332,8 @@ torch::Tensor PagedAttentionGemmCuda(
                 static_cast<int>(kv_page_tables.size(-1)),
                 kv_lens.data_ptr<int32_t>(),
                 dim_d,
-                n_rep
+                n_rep,
+                positions.data_ptr<int32_t>()
             );
 
             // // Comment this after finishing DEBUG
