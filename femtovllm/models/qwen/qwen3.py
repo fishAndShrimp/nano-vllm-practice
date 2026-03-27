@@ -190,6 +190,18 @@ class QwenSelfAttention(nn.Module):
 
         self.o_proj = nn.Linear(n_heads * d_head, d_model, bias=False)
 
+    def gen_right_bottom_attn_mask(
+        self,
+        q_len: int,
+        kv_len: int,
+        device: str | torch.device,
+    ):
+        """ """
+        q_pos = torch.arange(q_len, device=device) - q_len + kv_len
+        kv_pos = torch.arange(kv_len, device=device)
+        mask = q_pos[:, None] >= kv_pos[None, :]
+        return mask
+
     def forward_varlen_custom_gemm(
         self,
         x: torch.Tensor,
@@ -325,6 +337,7 @@ class QwenSelfAttention(nn.Module):
                 .expand(n_kv_heads, n_rep, -1, d_head)
                 .reshape(n_kv_heads * n_rep, -1, d_head)
             )
+            _, kv_len, _ = i_k_rep.shape
 
             # (H, T, D)
             i_attn = F.scaled_dot_product_attention(
@@ -333,7 +346,7 @@ class QwenSelfAttention(nn.Module):
                 # (H, kv_len, D)
                 i_k_rep,
                 i_v_rep,
-                is_causal=(T > 1),
+                attn_mask=self.gen_right_bottom_attn_mask(T, kv_len, x.device),
                 dropout_p=(self.dropout_p if self.training else 0.0),
             )
             # (T, C) = (T, H*D)
@@ -481,6 +494,7 @@ class QwenSelfAttention(nn.Module):
                 .expand(n_kv_heads, n_rep, -1, d_head)
                 .reshape(n_kv_heads * n_rep, -1, d_head)
             )
+            _, kv_len, _ = i_k_rep.shape
 
             # (H, T, D)
             i_attn = F.scaled_dot_product_attention(
@@ -489,7 +503,7 @@ class QwenSelfAttention(nn.Module):
                 # (H, kv_len, D)
                 i_k_rep,
                 i_v_rep,
-                is_causal=(T > 1),
+                attn_mask=self.gen_right_bottom_attn_mask(T, kv_len, x.device),
                 dropout_p=(self.dropout_p if self.training else 0.0),
             )
             # (T, C) = (T, H*D)
@@ -577,13 +591,14 @@ class QwenSelfAttention(nn.Module):
             .expand(B, n_kv_heads, n_rep, -1, d_head)
             .reshape(B, n_kv_heads * n_rep, -1, d_head)
         )
+        _, _, kv_len, _ = k_rep.shape
 
         # (B, H, T, D)
         out = F.scaled_dot_product_attention(
             q,
             k_rep,
             v_rep,
-            is_causal=(T > 1),
+            attn_mask=self.gen_right_bottom_attn_mask(T, kv_len, x.device),
             dropout_p=(self.dropout_p if self.training else 0.0),
         )
 

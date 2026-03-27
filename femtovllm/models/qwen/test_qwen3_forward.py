@@ -54,15 +54,15 @@ with torch.no_grad():
             dim=-1,
         )
 
-        # next_token_id = torch.argmax(
-        #     next_token_logits,
-        #     dim=-1,
-        #     keepdim=True,
-        # )
-        next_token_id = torch.multinomial(
-            next_token_probs,
-            num_samples=1,
+        next_token_id = torch.argmax(
+            next_token_logits,
+            dim=-1,
+            keepdim=True,
         )
+        # next_token_id = torch.multinomial(
+        #     next_token_probs,
+        #     num_samples=1,
+        # )
 
         idx = torch.cat((idx, next_token_id), dim=-1)
         print(tokenizer.decode(idx[0]))

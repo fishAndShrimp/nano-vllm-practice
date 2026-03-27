@@ -27,7 +27,7 @@ out = F.scaled_dot_product_attention(
     q,
     k,
     v,
-    is_causal=(T > 1),
+    attn_mask=self.gen_right_bottom_attn_mask(T, kv_len, x.device),
     dropout_p=(self.dropout if self.training else 0.0),
 )
 ```
@@ -57,7 +57,7 @@ out = F.scaled_dot_product_attention(
     q,
     k_rep,
     v_rep,
-    is_causal=(T > 1),
+    attn_mask=self.gen_right_bottom_attn_mask(T, kv_len, x.device),
     dropout_p=(self.dropout if self.training else 0.0),
 )
 ```
