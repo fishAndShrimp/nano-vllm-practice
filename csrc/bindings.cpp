@@ -31,6 +31,16 @@ torch::Tensor FlashAttentionCoalescedCuda(
     torch::Tensor v
 );
 
+torch::Tensor PagedAttentionGemmCuda(
+    torch::Tensor q,
+    torch::Tensor k_pool,
+    torch::Tensor v_pool,
+    torch::Tensor cu_seqlens,
+    int q_len_max,
+    torch::Tensor kv_page_tables,
+    int kv_len
+);
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("VecAddCuda", &VecAddCuda)
         .def("ReluCuda", &ReluCuda)
@@ -49,6 +59,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def(
             "FlashAttentionCoalescedCuda",
             &FlashAttentionCoalescedCuda
+        )
+        .def(
+            "PagedAttentionGemmCuda",
+            &PagedAttentionGemmCuda
         )
         .def("VecAddRaw", &VecAddRaw);
 }

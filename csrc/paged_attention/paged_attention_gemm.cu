@@ -4,23 +4,46 @@
 
 #include "../utils/cuda_check.cuh"
 
-constexpr int kTileSize = 32;
+constexpr int kTileSize = 64;
 constexpr int kDimHead = 128;
 
 template <typename scalar_t>
-__global__ void FlashAttentionCoalescedKernel(
+__global__ void PagedAttentionGemmKernel(
     const scalar_t* __restrict__ q_batched,
-    const scalar_t* __restrict__ k_t_batched,
-    const scalar_t* __restrict__ v_batched,
+    const scalar_t* __restrict__ k_pool,
+    const scalar_t* __restrict__ v_pool,
+    int pool_stride_0,
+    int pool_stride_1,
+    int pool_stride_2,
     scalar_t* __restrict__ out_batched,
-    int dim_t,
-    int dim_c
+    const int32_t* __restrict__ cu_seqlens,
+    int q_len_flatten,
+    const int32_t* __restrict__ kv_page_tables,
+    int num_pages_per_seq,
+    int kv_len,
+    int dim_d,
+    int n_rep
 ) {
-    int batch_idx = (blockIdx.z) * gridDim.y + (blockIdx.y);
-    auto q = q_batched + dim_t * dim_c * batch_idx;
-    auto k_t = k_t_batched + dim_t * dim_c * batch_idx;
-    auto v = v_batched + dim_t * dim_c * batch_idx;
-    auto out = out_batched + dim_t * dim_c * batch_idx;
+    auto seq_idx = blockIdx.y;
+    auto q_begin = cu_seqlens[seq_idx];
+    auto q_end = cu_seqlens[seq_idx + 1];
+
+    auto ly = threadIdx.x;
+    auto gy_base = q_begin + blockDim.x * blockIdx.x;
+    auto gy = gy_base + ly;
+    if (gy_base >= q_end) {
+        return;
+    }
+
+    auto page_table =
+        kv_page_tables + num_pages_per_seq * seq_idx;
+
+    auto head_idx = blockIdx.z;
+    auto kv_head_idx = head_idx / n_rep;
+
+    auto q = q_batched + q_len_flatten * dim_d * head_idx;
+    auto out =
+        out_batched + q_len_flatten * dim_d * head_idx;
 
     scalar_t q_tile[kTileSize];
     // use previous k_tile to help load q and v
@@ -36,14 +59,10 @@ __global__ void FlashAttentionCoalescedKernel(
         hidden[c] = static_cast<scalar_t>(0);
     }
 
-    auto ly = threadIdx.x;
-    auto gy_base = blockDim.x * blockIdx.x;
-    auto gy = gy_base + ly;
-
     scalar_t m_softmax = static_cast<scalar_t>(-INFINITY);
     scalar_t sum_softmax = static_cast<scalar_t>(0);
 
-    for (int tile_idx = 0; kTileSize * tile_idx < dim_t;
+    for (int tile_idx = 0; kTileSize * tile_idx < kv_len;
          tile_idx++) {
         // sw: scores then weights
         float sw[kTileSize];
@@ -54,15 +73,15 @@ __global__ void FlashAttentionCoalescedKernel(
         }
 
         // [STEP: phases]
-        for (int phase = 0; kTileSize * phase < dim_c;
+        for (int phase = 0; kTileSize * phase < dim_d;
              phase++) {
             // [STEP: load q]
             for (int row = 0; row < kTileSize; row++) {
                 auto col = threadIdx.x;
-                if ((gy_base + row) < dim_t &&
-                    (kTileSize * phase + col) < dim_c) {
+                if ((gy_base + row) < q_end &&
+                    (kTileSize * phase + col) < dim_d) {
                     sdata.q[row][col] =
-                        q[(gy_base + row) * dim_c +
+                        q[(gy_base + row) * dim_d +
                           (kTileSize * phase + col)];
                 } else {
                     sdata.q[row][col] =
@@ -76,15 +95,23 @@ __global__ void FlashAttentionCoalescedKernel(
             }
             __syncthreads();
 
-            // [STEP: load k_t]
-            for (int row = 0; row < kTileSize; row++) {
-                auto col = threadIdx.x;
-                if ((kTileSize * phase + row) < dim_c &&
-                    (kTileSize * tile_idx + col) < dim_t) {
-                    sdata.k[row][col] =
-                        k_t[(kTileSize * phase + row) *
-                                dim_t +
-                            (kTileSize * tile_idx + col)];
+            // [STEP: load k from pool]
+            for (int col = 0; col < kTileSize; col++) {
+                auto row = threadIdx.x;
+                auto page_idx = page_table[tile_idx];
+
+                if ((kTileSize * phase + row) < dim_d &&
+                    (kTileSize * tile_idx + col) < kv_len) {
+                    // [STEP: pick k from k_pool]
+                    // k_pool now is (..., block_size,
+                    // dim_d)
+                    // We need q@k.T therefore k_pool is
+                    // picked by a transposed order
+                    sdata.k[row][col] = k_pool
+                        [pool_stride_0 * page_idx +
+                         pool_stride_1 * kv_head_idx +
+                         pool_stride_2 * col +
+                         (kTileSize * phase + row)];
                 } else {
                     sdata.k[row][col] =
                         static_cast<scalar_t>(0);
@@ -107,7 +134,7 @@ __global__ void FlashAttentionCoalescedKernel(
         }
 
         // [STEP: FIND m_new]
-        auto sqrt_c = static_cast<scalar_t>(sqrt(dim_c));
+        auto sqrt_c = static_cast<scalar_t>(sqrt(dim_d));
         auto m_new = m_softmax;
 #pragma unroll
         for (int lx = 0; lx < kTileSize; lx++) {
@@ -116,10 +143,11 @@ __global__ void FlashAttentionCoalescedKernel(
         }
 
         // [STEP: maintain with m_new]
-        sum_softmax *= exp(m_softmax - m_new);
+        auto exp_delta = exp(m_softmax - m_new);
+        sum_softmax *= exp_delta;
 #pragma unroll
         for (int c = 0; c < kDimHead; c++) {
-            hidden[c] *= exp(m_softmax - m_new);
+            hidden[c] *= exp_delta;
         }
         m_softmax = m_new;
 
@@ -135,8 +163,9 @@ __global__ void FlashAttentionCoalescedKernel(
             // silently corrupting the sum_softmax
             // denominator.
 
+            // TODO casual mask
             auto gx = kTileSize * tile_idx + lx;
-            if (gx < dim_t) {
+            if (gx < kv_len) {
                 sw[lx] = exp(sw[lx] - m_new);
             } else {
                 sw[lx] = 0.0;
@@ -146,17 +175,21 @@ __global__ void FlashAttentionCoalescedKernel(
         }
 
         // [STEP: phases]
-        for (int phase = 0; kTileSize * phase < dim_c;
+        for (int phase = 0; kTileSize * phase < dim_d;
              phase++) {
             // [STEP: load v]
             for (int row = 0; row < kTileSize; row++) {
                 auto col = threadIdx.x;
-                if ((kTileSize * tile_idx + row) < dim_t &&
-                    (kTileSize * phase + col) < dim_c) {
-                    sdata.v[row][col] =
-                        v[(kTileSize * tile_idx + row) *
-                              dim_c +
-                          (kTileSize * phase + col)];
+                auto page_idx = page_table[tile_idx];
+
+                if ((kTileSize * tile_idx + row) < kv_len &&
+                    (kTileSize * phase + col) < dim_d) {
+                    // pick v from v_pool
+                    sdata.v[row][col] = v_pool
+                        [pool_stride_0 * page_idx +
+                         pool_stride_1 * kv_head_idx +
+                         pool_stride_2 * row +
+                         (kTileSize * phase + col)];
                 } else {
                     sdata.v[row][col] =
                         static_cast<scalar_t>(0);
@@ -198,74 +231,100 @@ __global__ void FlashAttentionCoalescedKernel(
 
 #pragma unroll
     for (int c = 0; c < kDimHead; c++) {
-        if ((gy) < dim_t && (c) < dim_c) {
-            out[gy * dim_c + c] = hidden[c] / sum_softmax;
+        if ((gy) < q_end && (c) < dim_d) {
+            out[gy * dim_d + c] = hidden[c] / sum_softmax;
         }
     }
 
     //     // [DEBUG: output without sum_softmax]
     // #pragma unroll
     //     for (int c = 0; c < kDimHead; c++) {
-    //         if ((gy) < dim_t && (c) < dim_c) {
-    //             out[gy * dim_c + c] = hidden[c];
+    //         if ((gy) < dim_t && (c) < dim_d) {
+    //             out[gy * dim_d + c] = hidden[c];
     //         }
     //     }
 }
 
-torch::Tensor FlashAttentionCoalescedCuda(
+torch::Tensor PagedAttentionGemmCuda(
     torch::Tensor q,
-    torch::Tensor k,
-    torch::Tensor v
+    torch::Tensor k_pool,
+    torch::Tensor v_pool,
+    torch::Tensor cu_seqlens,
+    int q_len_max,
+    torch::Tensor kv_page_tables,
+    int kv_len
 ) {
     TORCH_CHECK_EQ(q.is_cuda(), true);
-    TORCH_CHECK_EQ(k.is_cuda(), true);
-    TORCH_CHECK_EQ(v.is_cuda(), true);
+    TORCH_CHECK_EQ(k_pool.is_cuda(), true);
+    TORCH_CHECK_EQ(v_pool.is_cuda(), true);
     TORCH_CHECK_EQ(q.is_contiguous(), true);
-    TORCH_CHECK_EQ(k.is_contiguous(), true);
-    TORCH_CHECK_EQ(v.is_contiguous(), true);
+    TORCH_CHECK_EQ(k_pool.is_contiguous(), true);
+    TORCH_CHECK_EQ(v_pool.is_contiguous(), true);
 
-    TORCH_CHECK_EQ(q.dim(), 4);
-    TORCH_CHECK_EQ(k.dim(), 4);
-    TORCH_CHECK_EQ(v.dim(), 4);
+    TORCH_CHECK_EQ(cu_seqlens.scalar_type(), torch::kInt32);
+    TORCH_CHECK_EQ(
+        kv_page_tables.scalar_type(),
+        torch::kInt32
+    );
+
+    TORCH_CHECK_EQ(q.dim(), 3);
+    TORCH_CHECK_EQ(k_pool.dim(), 4);
+    TORCH_CHECK_EQ(v_pool.dim(), 4);
+    // (num_blocks, n_kv_heads, block_size, d_head)
     for (int i = 0; i < 4; i++) {
-        TORCH_CHECK_EQ(q.size(i), k.size(i));
-        TORCH_CHECK_EQ(q.size(i), v.size(i));
+        TORCH_CHECK_EQ(k_pool.size(i), v_pool.size(i));
     }
 
-    int dim_b = q.size(0);
-    int dim_h = q.size(1);
-    int dim_t = q.size(2);
-    int dim_c = q.size(3);
-    TORCH_CHECK_LE(dim_c, kDimHead);
+    // (dim_h, q_len_flatten, dim_d)
+    // (n_heads, q_len_flatten, d_head)
+    int dim_h = q.size(0);
+    int q_len_flatten = q.size(1);
+    int dim_d = q.size(2);
+    TORCH_CHECK_LE(dim_d, kDimHead);
+
+    int n_kv_heads = k_pool.size(1);
+    TORCH_CHECK_EQ(dim_h % n_kv_heads, 0);
+    int n_rep = dim_h / n_kv_heads;
 
     auto out = torch::empty(
-        {dim_b, dim_h, dim_t, dim_c},
+        {dim_h, q_len_flatten, dim_d},
         q.options()
     );
-    auto k_t = k.transpose(-2, -1).contiguous();
+
+    int num_seqs = cu_seqlens.numel() - 1;
 
     AT_DISPATCH_FLOATING_TYPES_AND2(
         at::ScalarType::Half,
         at::ScalarType::BFloat16,
         q.scalar_type(),
-        "FlashAttentionCoalescedCuda",
+        "PagedAttentionGemmCuda",
         ([&] {
-            FlashAttentionCoalescedKernel<scalar_t>
-                <<<dim3(
-                       (dim_t + kTileSize - 1) / kTileSize,
-                       dim_h,
-                       dim_b
-                   ),
-                   kTileSize>>>(
-                    q.data_ptr<scalar_t>(),
-                    k_t.data_ptr<scalar_t>(),
-                    v.data_ptr<scalar_t>(),
-                    out.data_ptr<scalar_t>(),
-                    dim_t,
-                    dim_c
-                );
-            CUDA_CHECK(cudaGetLastError());
-            cudaDeviceSynchronize();
+            PagedAttentionGemmKernel<scalar_t><<<
+                dim3(
+                    (q_len_max + kTileSize - 1) / kTileSize,
+                    num_seqs,
+                    dim_h
+                ),
+                kTileSize>>>(
+                q.data_ptr<scalar_t>(),
+                k_pool.data_ptr<scalar_t>(),
+                v_pool.data_ptr<scalar_t>(),
+                k_pool.stride(0),
+                k_pool.stride(1),
+                k_pool.stride(2),
+                out.data_ptr<scalar_t>(),
+                cu_seqlens.data_ptr<int32_t>(),
+                q_len_flatten,
+                kv_page_tables.data_ptr<int32_t>(),
+                static_cast<int>(kv_page_tables.size(-1)),
+                kv_len,
+                dim_d,
+                n_rep
+            );
+
+            // // Comment this after finishing DEBUG
+            // CUDA_CHECK(cudaGetLastError());
+            // cudaDeviceSynchronize();
         })
     );
 

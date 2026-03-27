@@ -66,6 +66,9 @@ setup(
                 os.path.join(
                     ROOT_DIR, "csrc", "flash_attention", "flash_attention_coalesced.cu"
                 ),
+                os.path.join(
+                    ROOT_DIR, "csrc", "paged_attention", "paged_attention_gemm.cu"
+                ),
                 # Future kernels (e.g., gemm.cu) will be added here
             ],
             extra_compile_args={
