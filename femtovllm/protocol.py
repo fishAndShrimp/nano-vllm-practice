@@ -1,5 +1,7 @@
 import dataclasses
 
+import torch
+
 
 @dataclasses.dataclass
 class SamplingParams:
@@ -22,6 +24,21 @@ class SamplingParams:
             self,
             stop_token_ids=[x for x in self.stop_token_ids],
         )
+
+
+@dataclasses.dataclass
+class VarlenAttnMetadata:
+    positions: torch.Tensor
+
+    cu_seqlens: torch.Tensor
+    raw_cu_seqlens: list[int]
+    q_len_max: int
+
+    k_cache_pools: list[torch.Tensor]
+    v_cache_pools: list[torch.Tensor]
+
+    block_tables: torch.Tensor
+    raw_block_tables: list[list[int]]
 
 
 class StepDelta:

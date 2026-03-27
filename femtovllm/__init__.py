@@ -11,6 +11,7 @@ class DevFlags:
         "custom_gemm",
         "custom_gemm_gemv",
     )[0]
+    fake_varlen_by_batch: bool = False
 
 
 _DEV = DevFlags()

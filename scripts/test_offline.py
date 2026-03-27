@@ -25,6 +25,7 @@ weights_dir = (
 )
 
 
+femtovllm._DEV.fake_varlen_by_batch = True
 femtovllm._DEV.varlen_attn_impl = "pytorch"
 llm = LLM(
     max_seqs=10,

@@ -155,39 +155,6 @@ class CoreEngine:
         ]
         ##### [STEP: gen huge kv_cache tensors as pools]
 
-    def pad_block_tables(
-        self,
-        scheduled: list[tuple[Sequence, int]],
-    ):
-        """ """
-        if not scheduled:
-            return None
-
-        raw_block_tables = [
-            #####
-            self.scheduler.kv_cache_manager.get_block_table(x)
-            for x, _ in scheduled
-        ]
-        max_blocks = max(
-            #####
-            len(x)
-            for x in raw_block_tables
-        )
-
-        # pad -1 rather than 0
-        block_tables = []
-        for raw_table in raw_block_tables:
-            block_tables.append(
-                #####
-                raw_table + [-1] * (max_blocks - len(raw_table))
-            )
-
-        return torch.tensor(
-            block_tables,
-            dtype=torch.int32,
-            device=self.device,
-        )
-
     def step(self):
         """ """
         scheduled, aborted = self.scheduler.step()
@@ -195,7 +162,11 @@ class CoreEngine:
             scheduled_const=scheduled,
             k_cache_pools=self.k_cache_pools,
             v_cache_pools=self.v_cache_pools,
-            block_tables=self.pad_block_tables(scheduled),
+            raw_block_tables=[
+                #####
+                self.scheduler.kv_cache_manager.get_block_table(x)
+                for x, _ in scheduled
+            ],
         )
         step_deltas: list[StepDelta] = []
 

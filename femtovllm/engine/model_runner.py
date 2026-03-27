@@ -7,6 +7,7 @@ from femtovllm.engine.kv_cache_manager import KVCacheManager
 from femtovllm.engine.sampler import Sampler
 from femtovllm.engine.sequence import Sequence
 from femtovllm.models import QwenForCausalLM
+from femtovllm.protocol import VarlenAttnMetadata
 
 
 class ModelRunner:
@@ -41,13 +42,41 @@ class ModelRunner:
 
         self.sampler = Sampler()
 
+    def pad_block_tables(
+        self,
+        raw_block_tables: list[list[int]],
+    ):
+        """ """
+        if not raw_block_tables:
+            return None
+
+        max_blocks = max(
+            #####
+            len(x)
+            for x in raw_block_tables
+        )
+
+        # pad -1 rather than 0
+        block_tables = []
+        for raw_table in raw_block_tables:
+            block_tables.append(
+                #####
+                raw_table + [-1] * (max_blocks - len(raw_table))
+            )
+
+        return torch.tensor(
+            block_tables,
+            dtype=torch.int32,
+            device=self.device,
+        )
+
     @torch.inference_mode()
     def step(
         self,
         scheduled_const: list[tuple[Sequence, int]],
         k_cache_pools: list[torch.Tensor],
         v_cache_pools: list[torch.Tensor],
-        block_tables: torch.Tensor,
+        raw_block_tables: list[list[int]],
     ):
         """ """
         if len(scheduled_const) <= 0:
@@ -55,14 +84,17 @@ class ModelRunner:
 
         flatten = []
         positions = []
-        cu_seqlens = [0]
+        raw_cu_seqlens = [0]
 
+        q_len_max = -1
         for seq_const, num_tokens in scheduled_const:
             i_pos = seq_const.num_computed_tokens
 
             flatten.extend(seq_const.token_ids[i_pos : i_pos + num_tokens])
             positions.extend(range(i_pos, i_pos + num_tokens))
-            cu_seqlens.append(cu_seqlens[-1] + num_tokens)
+            raw_cu_seqlens.append(raw_cu_seqlens[-1] + num_tokens)
+
+            q_len_max = max(q_len_max, num_tokens)
 
         flatten = torch.tensor(
             flatten,
@@ -75,7 +107,7 @@ class ModelRunner:
             device=self.device,
         )
         cu_seqlens = torch.tensor(
-            cu_seqlens,
+            raw_cu_seqlens,
             dtype=torch.int32,
             device=self.device,
         )
@@ -83,11 +115,16 @@ class ModelRunner:
         # (B, vocab_size)
         logits_next = self.model.forward_varlen(
             idx_flatten=flatten,
-            positions=positions,
-            cu_seqlens=cu_seqlens,
-            k_cache_pools=k_cache_pools,
-            v_cache_pools=v_cache_pools,
-            block_tables=block_tables,
+            varlen_attn_metadata=VarlenAttnMetadata(
+                positions=positions,
+                cu_seqlens=cu_seqlens,
+                raw_cu_seqlens=raw_cu_seqlens,
+                q_len_max=q_len_max,
+                k_cache_pools=k_cache_pools,
+                v_cache_pools=v_cache_pools,
+                block_tables=self.pad_block_tables(raw_block_tables),
+                raw_block_tables=raw_block_tables,
+            ),
         )
 
         # (B,)

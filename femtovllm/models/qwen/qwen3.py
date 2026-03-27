@@ -1,5 +1,4 @@
 import collections
-import dataclasses
 from pathlib import Path
 from typing import Optional
 
@@ -11,15 +10,7 @@ from tqdm import tqdm
 from transformers import Qwen3Config
 
 import femtovllm
-
-
-@dataclasses.dataclass
-class VarlenAttnMetadata:
-    positions: torch.Tensor
-    cu_seqlens: torch.Tensor
-    k_cache_pools: list[torch.Tensor]
-    v_cache_pools: list[torch.Tensor]
-    block_tables: torch.Tensor
+from femtovllm.protocol import VarlenAttnMetadata
 
 
 class QwenRotaryEmbedding(nn.Module):
@@ -832,37 +823,28 @@ class QwenForCausalLM(nn.Module):
         self,
         # (T)
         idx_flatten: torch.Tensor,
-        positions: torch.Tensor,
-        cu_seqlens: torch.Tensor,
-        k_cache_pools: list[torch.Tensor],
-        v_cache_pools: list[torch.Tensor],
-        block_tables: torch.Tensor,
-        fake: bool = False,
+        varlen_attn_metadata: VarlenAttnMetadata,
     ):
         """
         - input.shape: (seqlen_total,)
         - output.shape: (B, vocab_size)
         - B: len(cu_seqlens) - 1
         """
-        if fake:
+        if femtovllm._DEV.fake_varlen_by_batch:
             return self._forward_varlen_fake(
                 idx_flatten=idx_flatten,
-                cu_seqlens=cu_seqlens,
+                varlen_attn_metadata=varlen_attn_metadata,
             )
 
-        varlen_attn_metadata = VarlenAttnMetadata(
-            positions=positions,
-            cu_seqlens=cu_seqlens,
-            k_cache_pools=k_cache_pools,
-            v_cache_pools=v_cache_pools,
-            block_tables=block_tables,
-        )
         hidden, _ = self.model(
             idx=idx_flatten,
             varlen_attn_metadata=varlen_attn_metadata,
         )
 
-        hidden_next = hidden[cu_seqlens[1:] - 1]
+        hidden_next = hidden[
+            #####
+            varlen_attn_metadata.cu_seqlens[1:] - 1
+        ]
         logits_next: torch.Tensor = self.lm_head(hidden_next)
 
         return logits_next
@@ -871,7 +853,7 @@ class QwenForCausalLM(nn.Module):
         self,
         # (T)
         idx_flatten: torch.Tensor,
-        cu_seqlens: torch.Tensor,
+        varlen_attn_metadata: VarlenAttnMetadata,
     ):
         """
         WARNING: Temporary workaround to fast verify engine logic.
@@ -888,39 +870,41 @@ class QwenForCausalLM(nn.Module):
         _PAD_TOKEN = "<|endoftext|>"
         _PAD_TOKEN_ID = 151643
 
-        B = len(cu_seqlens) - 1
-        T = max(
-            [
-                #####
-                (cu_seqlens[i + 1] - cu_seqlens[i])
-                for i in range(B)
-            ]
-        )
+        raw_cu_seqlens = varlen_attn_metadata.raw_cu_seqlens
 
-        idx = torch.full(
-            (B, T),
-            fill_value=_PAD_TOKEN_ID,
-            dtype=idx_flatten.dtype,
-            device=idx_flatten.device,
-        )
+        B = len(varlen_attn_metadata.raw_cu_seqlens) - 1
+        T = varlen_attn_metadata.q_len_max
 
+        idx_batch = []
+        idx_flatten_cpu = idx_flatten.tolist()  # EXPENSIVE
         for i in range(B):
-            i_len = cu_seqlens[i + 1] - cu_seqlens[i]
-            idx[i, :i_len] = idx_flatten[
-                #####
-                cu_seqlens[i] : cu_seqlens[i + 1]
-            ]
+            q_begin = raw_cu_seqlens[i]
+            q_end = raw_cu_seqlens[i + 1]
+            q_len = q_end - q_begin
+            idx_batch.append(
+                idx_flatten_cpu[q_begin:q_end] + [_PAD_TOKEN_ID] * (T - q_len)
+            )
 
-        x, _ = self.model(idx, None)
+        idx_batch = torch.tensor(
+            idx_batch, dtype=idx_flatten.dtype, device=idx_flatten.device
+        )
+
+        # (B, T, C)
+        x, _ = self.model(idx_batch, None)
 
         x_flatten = []
         for i in range(B):
-            i_len = cu_seqlens[i + 1] - cu_seqlens[i]
-            x_flatten.append(x[i, :i_len])
+            q_begin = raw_cu_seqlens[i]
+            q_end = raw_cu_seqlens[i + 1]
+            q_len = q_end - q_begin
+            x_flatten.append(x[i, :q_len])  # EXPENSIVE
         x_flatten = torch.cat(x_flatten, dim=0)
 
         # (B, C)
-        x_next = x_flatten[cu_seqlens[1:] - 1]
+        x_next = x_flatten[
+            #####
+            varlen_attn_metadata.cu_seqlens[1:] - 1
+        ]
         # (B, vocab_size)
         logits_next: torch.Tensor = self.lm_head(x_next)
         return logits_next
