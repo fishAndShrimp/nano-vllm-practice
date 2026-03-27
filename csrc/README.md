@@ -207,5 +207,15 @@ out1 = out1 @ v
 
 ---
 
+## page_idx >= 0
 
+```python
+CORRECT:
+i_block_table = [x for x in block_tables[i] if (x >= 0)]
+
+ERROR:
+i_block_table = [x for x in block_tables[i] if (x > 0)]
+```
+
+---
 

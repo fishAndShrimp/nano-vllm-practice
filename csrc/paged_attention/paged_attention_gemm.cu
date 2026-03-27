@@ -4,7 +4,7 @@
 
 #include "../utils/cuda_check.cuh"
 
-constexpr int kTileSize = 64;
+constexpr int kTileSize = 16;
 constexpr int kDimHead = 128;
 
 template <typename scalar_t>
@@ -20,7 +20,7 @@ __global__ void PagedAttentionGemmKernel(
     int q_len_flatten,
     const int32_t* __restrict__ kv_page_tables,
     int num_pages_per_seq,
-    int kv_len,
+    const int32_t* __restrict__ kv_lens,
     int dim_d,
     int n_rep
 ) {
@@ -37,6 +37,7 @@ __global__ void PagedAttentionGemmKernel(
 
     auto page_table =
         kv_page_tables + num_pages_per_seq * seq_idx;
+    auto kv_len = kv_lens[seq_idx];
 
     auto head_idx = blockIdx.z;
     auto kv_head_idx = head_idx / n_rep;
@@ -252,7 +253,7 @@ torch::Tensor PagedAttentionGemmCuda(
     torch::Tensor cu_seqlens,
     int q_len_max,
     torch::Tensor kv_page_tables,
-    int kv_len
+    torch::Tensor kv_lens
 ) {
     TORCH_CHECK_EQ(q.is_cuda(), true);
     TORCH_CHECK_EQ(k_pool.is_cuda(), true);
@@ -317,7 +318,7 @@ torch::Tensor PagedAttentionGemmCuda(
                 q_len_flatten,
                 kv_page_tables.data_ptr<int32_t>(),
                 static_cast<int>(kv_page_tables.size(-1)),
-                kv_len,
+                kv_lens.data_ptr<int32_t>(),
                 dim_d,
                 n_rep
             );

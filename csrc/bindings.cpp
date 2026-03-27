@@ -38,7 +38,7 @@ torch::Tensor PagedAttentionGemmCuda(
     torch::Tensor cu_seqlens,
     int q_len_max,
     torch::Tensor kv_page_tables,
-    int kv_len
+    torch::Tensor kv_lens
 );
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
