@@ -260,3 +260,28 @@ def gen_right_bottom_mask(q_len, kv_len):
 
 ---
 
+## -INF before m_new
+
+```cpp
+        // [STEP: SCALE by sqrt(dim_d)]
+        // [STEP: MASK by -INF]
+        // [STEP: FIND m_new]
+        auto sqrt_c = static_cast<scalar_t>(sqrt(dim_d));
+        auto m_new = m_softmax;
+#pragma unroll
+        for (int lx = 0; lx < kTileSize; lx++) {
+            sw[lx] /= sqrt_c;
+
+            // !!! [CRITICAL: MASKING] !!!
+            // -INF must be given before calc m_new
+            auto gx = kTileSize * tile_idx + lx;
+            if (!(gx < kv_len && gx <= position)) {
+                sw[lx] = -INFINITY;
+            }
+
+            m_new = max(m_new, sw[lx]);
+        }
+```
+
+---
+

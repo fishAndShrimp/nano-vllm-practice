@@ -59,15 +59,15 @@ __global__ void PagedAttentionGemmKernel(
         scalar_t k[kTileSize][kTileSize + 1];
         scalar_t v[kTileSize][kTileSize + 1];
     } sdata;
-    scalar_t hidden[kDimHead];
+    float hidden[kDimHead];
 
 #pragma unroll
     for (int c = 0; c < kDimHead; c++) {
-        hidden[c] = static_cast<scalar_t>(0);
+        hidden[c] = 0.0;
     }
 
-    scalar_t m_softmax = static_cast<scalar_t>(-INFINITY);
-    scalar_t sum_softmax = static_cast<scalar_t>(0);
+    float m_softmax = -INFINITY;
+    float sum_softmax = 0.0;
 
     for (int tile_idx = 0; kTileSize * tile_idx < kv_len;
          tile_idx++) {
@@ -140,12 +140,22 @@ __global__ void PagedAttentionGemmKernel(
             __syncthreads();
         }
 
+        // [STEP: SCALE by sqrt(dim_d)]
+        // [STEP: MASK by -INF]
         // [STEP: FIND m_new]
-        auto sqrt_c = static_cast<scalar_t>(sqrt(dim_d));
+        auto sqrt_c = static_cast<float>(sqrt(dim_d));
         auto m_new = m_softmax;
 #pragma unroll
         for (int lx = 0; lx < kTileSize; lx++) {
             sw[lx] /= sqrt_c;
+
+            // !!! [CRITICAL: MASKING] !!!
+            // -INF must be given before calc m_new
+            auto gx = kTileSize * tile_idx + lx;
+            if (!(gx < kv_len && gx <= position)) {
+                sw[lx] = -INFINITY;
+            }
+
             m_new = max(m_new, sw[lx]);
         }
 
@@ -170,7 +180,6 @@ __global__ void PagedAttentionGemmKernel(
             // silently corrupting the sum_softmax
             // denominator.
 
-            // TODO casual mask
             auto gx = kTileSize * tile_idx + lx;
             if (gx < kv_len && gx <= position) {
                 sw[lx] = exp(sw[lx] - m_new);
@@ -239,7 +248,9 @@ __global__ void PagedAttentionGemmKernel(
 #pragma unroll
     for (int c = 0; c < kDimHead; c++) {
         if ((gy) < q_end && (c) < dim_d) {
-            out[gy * dim_d + c] = hidden[c] / sum_softmax;
+            out[gy * dim_d + c] = static_cast<scalar_t>(
+                hidden[c] / sum_softmax
+            );
         }
     }
 
