@@ -79,7 +79,7 @@ class ModelRunner:
         raw_block_tables: list[list[int]],
     ):
         """ """
-        if len(scheduled_const) <= 0:
+        if not scheduled_const:
             return []
 
         flatten = []

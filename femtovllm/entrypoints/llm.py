@@ -120,5 +120,5 @@ class LLM:
                 )
                 self._texts[step_delta.req_id] += token_str
 
-            if len(text_deltas) > 0:
+            if text_deltas:
                 yield text_deltas
