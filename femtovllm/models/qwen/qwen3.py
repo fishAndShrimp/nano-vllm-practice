@@ -265,7 +265,7 @@ class QwenSelfAttention(nn.Module):
 
             remaining_cache = int(varlen_attn_metadata.positions[begin])
             p_begin = begin
-            for block_index in block_table.tolist():
+            for block_index in block_table.tolist():  # EXPENSIVE
                 if block_index < 0:
                     break
                 if p_begin >= end:
@@ -422,7 +422,7 @@ class QwenSelfAttention(nn.Module):
 
             remaining_cache = int(varlen_attn_metadata.positions[begin])
             p_begin = begin
-            for block_index in block_table.tolist():
+            for block_index in block_table.tolist():  # EXPENSIVE
                 if block_index < 0:
                     break
                 if p_begin >= end:

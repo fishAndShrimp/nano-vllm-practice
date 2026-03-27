@@ -250,12 +250,12 @@ ERROR:
 ```python
 def gen_right_bottom_mask(q_len, kv_len):
     """ """
-    q_pos = torch.arange(q_len) - q_len + kv_len
-    kv_pos = torch.arange(kv_len)
+    q_pos = torch.arange(q_len, device="cuda") - q_len + kv_len
+    kv_pos = torch.arange(kv_len, device="cuda")
     mask = q_pos[:, None] >= kv_pos[None, :]
     print("[ MASK ]")
     print(mask)
-    return mask.to(device="cuda")
+    return mask
 ```
 
 ---

@@ -160,8 +160,7 @@ class CoreEngine:
         scheduled: list[tuple[Sequence, int]],
     ):
         """ """
-        B = len(scheduled)
-        if B <= 0:
+        if not scheduled:
             return None
 
         raw_block_tables = [
@@ -176,20 +175,16 @@ class CoreEngine:
         )
 
         # pad -1 rather than 0
-        block_tables = -torch.ones(
-            (B, max_blocks),
-            dtype=torch.int32,
-        )
-        for i, raw_table in enumerate(raw_block_tables):
-            block_tables[
+        block_tables = []
+        for raw_table in raw_block_tables:
+            block_tables.append(
                 #####
-                i, : len(raw_table)
-            ] = torch.tensor(
-                raw_table,
-                dtype=torch.int32,
+                raw_table + [-1] * (max_blocks - len(raw_table))
             )
 
-        return block_tables.to(
+        return torch.tensor(
+            block_tables,
+            dtype=torch.int32,
             device=self.device,
         )
 
