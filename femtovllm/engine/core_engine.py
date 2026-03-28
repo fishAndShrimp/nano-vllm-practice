@@ -4,6 +4,7 @@ from typing import Optional
 import torch
 from transformers import Qwen3Config
 
+import femtovllm.ops
 from femtovllm.engine.kv_cache_manager import KVCacheManager
 from femtovllm.engine.model_runner import ModelRunner
 from femtovllm.engine.request_queue import RequestQueue
@@ -42,10 +43,10 @@ class CoreEngine:
 
         # static block_size
         block_size = int(block_size)
-        if block_size != 16:
+        if block_size != femtovllm.ops.TILE_SIZE:
             raise NotImplementedError(
                 f"Dynamic block sizes are not yet supported (got {block_size}). "
-                "Please set block_size=64 "
+                f"Please set block_size={femtovllm.ops.TILE_SIZE} "
                 "to match the hardware-aligned tile size of the custom GEMM/GEMV kernels."
             )
         ##### [STEP: block]

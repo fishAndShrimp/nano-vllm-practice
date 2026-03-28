@@ -8,6 +8,12 @@ except ImportError as e:
     ) from e
 
 
+TILE_SIZE = _cuda_backend.kTileSize
+# The CUDA backend strictly operates on fixed kDimHead lengths for register allocation.
+# Therefore, this is an exact DIM_HEAD, not a MAX_DIM_HEAD limit.
+DIM_HEAD = _cuda_backend.kDimHead
+
+
 def _ensure_valid_tensor(
     t: torch.Tensor,
     name: str,

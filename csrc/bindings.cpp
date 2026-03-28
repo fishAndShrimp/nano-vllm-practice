@@ -1,5 +1,7 @@
 #include <torch/extension.h>
 
+#include "./utils/constants.cuh"
+
 torch::Tensor VecAddCuda(torch::Tensor a, torch::Tensor b);
 torch::Tensor
 VecAddRaw(torch::Tensor a_cpu, torch::Tensor b_cpu);
@@ -43,6 +45,9 @@ torch::Tensor PagedAttentionGemmCuda(
 );
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.attr("kTileSize") = femtovllm::kTileSize;
+    m.attr("kDimHead") = femtovllm::kDimHead;
+
     m.def("VecAddCuda", &VecAddCuda)
         .def("ReluCuda", &ReluCuda)
         .def("TransposeCuda", &TransposeCuda)

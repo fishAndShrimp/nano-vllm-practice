@@ -2,10 +2,11 @@
 #include <cuda_runtime.h>
 #include <torch/extension.h>
 
+#include "../utils/constants.cuh"
 #include "../utils/cuda_check.cuh"
 
-constexpr int kTileSize = 16;
-constexpr int kDimHead = 128;
+using femtovllm::kDimHead;
+using femtovllm::kTileSize;
 
 template <typename scalar_t>
 __global__ void PagedAttentionGemmKernel(

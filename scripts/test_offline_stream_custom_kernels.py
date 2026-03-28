@@ -9,7 +9,7 @@ from transformers import Qwen3Config
 import femtovllm
 from femtovllm import LLM, SamplingParams
 
-torch.cuda.set_sync_debug_mode("warn")
+# torch.cuda.set_sync_debug_mode("warn")
 
 
 # ==========================================
@@ -53,7 +53,7 @@ llm = LLM(
     max_tokens=1000,
     max_tokens_per_seq=100,
     num_blocks=200,
-    block_size=16,
+    block_size=32,
     hf_config=Qwen3Config.from_pretrained(weights_dir),
     weights_dir=weights_dir,
     dtype=torch.bfloat16,
