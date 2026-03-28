@@ -29,6 +29,7 @@ class SamplingParams:
 @dataclasses.dataclass
 class VarlenAttnMetadata:
     positions: torch.Tensor
+    raw_positions: list[int]
 
     cu_seqlens: torch.Tensor
     raw_cu_seqlens: list[int]

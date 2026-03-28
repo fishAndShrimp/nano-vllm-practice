@@ -83,7 +83,7 @@ class ModelRunner:
             return []
 
         flatten = []
-        positions = []
+        raw_positions = []
         raw_cu_seqlens = [0]
 
         q_len_max = -1
@@ -91,7 +91,7 @@ class ModelRunner:
             i_pos = seq_const.num_computed_tokens
 
             flatten.extend(seq_const.token_ids[i_pos : i_pos + num_tokens])
-            positions.extend(range(i_pos, i_pos + num_tokens))
+            raw_positions.extend(range(i_pos, i_pos + num_tokens))
             raw_cu_seqlens.append(raw_cu_seqlens[-1] + num_tokens)
 
             q_len_max = max(q_len_max, num_tokens)
@@ -102,7 +102,7 @@ class ModelRunner:
             device=self.device,
         )
         positions = torch.tensor(
-            positions,
+            raw_positions,
             dtype=torch.int32,
             device=self.device,
         )
@@ -117,6 +117,7 @@ class ModelRunner:
             idx_flatten=flatten,
             varlen_attn_metadata=VarlenAttnMetadata(
                 positions=positions,
+                raw_positions=raw_positions,
                 cu_seqlens=cu_seqlens,
                 raw_cu_seqlens=raw_cu_seqlens,
                 q_len_max=q_len_max,

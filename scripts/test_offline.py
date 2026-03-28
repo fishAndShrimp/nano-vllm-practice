@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import torch
+import torch._C
 from transformers import Qwen3Config
 
 import femtovllm
@@ -25,7 +26,7 @@ weights_dir = (
 )
 
 
-femtovllm._DEV.fake_varlen_by_batch = True
+torch.cuda.set_sync_debug_mode("warn")
 femtovllm._DEV.varlen_attn_impl = "pytorch"
 llm = LLM(
     max_seqs=10,
