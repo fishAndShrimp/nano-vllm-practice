@@ -9,6 +9,9 @@ from transformers import Qwen3Config
 import femtovllm
 from femtovllm import LLM, SamplingParams
 
+torch.cuda.set_sync_debug_mode("warn")
+
+
 # ==========================================
 # Inputs & Templates
 # Define the chat template and prepare the batch of prompts

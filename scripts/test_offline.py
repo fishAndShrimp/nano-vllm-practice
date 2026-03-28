@@ -7,6 +7,9 @@ from transformers import Qwen3Config
 import femtovllm
 from femtovllm import LLM, SamplingParams
 
+torch.cuda.set_sync_debug_mode("warn")
+
+
 # -----
 TEMPLATE = """<|im_start|>system
 You are a helpful assistant.<|im_end|>
@@ -26,7 +29,6 @@ weights_dir = (
 )
 
 
-torch.cuda.set_sync_debug_mode("warn")
 femtovllm._DEV.varlen_attn_impl = "pytorch"
 llm = LLM(
     max_seqs=10,

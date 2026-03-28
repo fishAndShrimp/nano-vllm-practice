@@ -236,10 +236,10 @@ class QwenSelfAttention(nn.Module):
 
         attn = []
         for batch in range(B):
-            begin = int(varlen_attn_metadata.cu_seqlens[batch])
-            end = int(varlen_attn_metadata.cu_seqlens[batch + 1])
+            begin = varlen_attn_metadata.raw_cu_seqlens[batch]
+            end = varlen_attn_metadata.raw_cu_seqlens[batch + 1]
 
-            block_table = varlen_attn_metadata.block_tables[batch]
+            raw_block_table = varlen_attn_metadata.raw_block_tables[batch]
             _, _, block_size, _ = k_cache_pool.shape
 
             # (T, H, D)
@@ -254,9 +254,9 @@ class QwenSelfAttention(nn.Module):
             i_k = []
             i_v = []
 
-            remaining_cache = int(varlen_attn_metadata.positions[begin])
+            remaining_cache = varlen_attn_metadata.raw_positions[begin]
             p_begin = begin
-            for block_index in block_table.tolist():  # EXPENSIVE
+            for block_index in raw_block_table:
                 if block_index < 0:
                     break
                 if p_begin >= end:
