@@ -85,6 +85,7 @@ class ModelRunner:
         flatten = []
         raw_positions = []
         raw_cu_seqlens = [0]
+        raw_kv_lens = []
 
         q_len_max = -1
         for seq_const, num_tokens in scheduled_const:
@@ -93,6 +94,7 @@ class ModelRunner:
             flatten.extend(seq_const.token_ids[i_pos : i_pos + num_tokens])
             raw_positions.extend(range(i_pos, i_pos + num_tokens))
             raw_cu_seqlens.append(raw_cu_seqlens[-1] + num_tokens)
+            raw_kv_lens.append(i_pos + num_tokens)
 
             q_len_max = max(q_len_max, num_tokens)
 
@@ -111,6 +113,11 @@ class ModelRunner:
             dtype=torch.int32,
             device=self.device,
         )
+        kv_lens = torch.tensor(
+            raw_kv_lens,
+            dtype=torch.int32,
+            device=self.device,
+        )
 
         # (B, vocab_size)
         logits_next = self.model.forward_varlen(
@@ -123,6 +130,7 @@ class ModelRunner:
                 q_len_max=q_len_max,
                 k_cache_pools=k_cache_pools,
                 v_cache_pools=v_cache_pools,
+                kv_lens=kv_lens,
                 block_tables=self.pad_block_tables(raw_block_tables),
                 raw_block_tables=raw_block_tables,
             ),

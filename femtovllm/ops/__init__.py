@@ -59,3 +59,33 @@ def vec_add(
         raise NotImplementedError("Triton backend is not implemented yet.")
     else:
         raise NotImplementedError(f"Unknown backend implementation: {impl}")
+
+
+def paged_attention_gemm(
+    q: torch.Tensor,
+    k_pool: torch.Tensor,
+    v_pool: torch.Tensor,
+    cu_seqlens: torch.Tensor,
+    q_len_max: int,
+    kv_page_tables: torch.Tensor,
+    kv_lens: torch.Tensor,
+    positions: torch.Tensor,
+    #####
+    impl: str = "cuda",
+):
+    """ """
+    q = _ensure_valid_tensor(q, "q")
+
+    if impl == "cuda":
+        return _cuda_backend.PagedAttentionGemmCuda(
+            q,
+            k_pool,
+            v_pool,
+            cu_seqlens,
+            q_len_max,
+            kv_page_tables,
+            kv_lens,
+            positions,
+        )
+    else:
+        raise NotImplementedError()

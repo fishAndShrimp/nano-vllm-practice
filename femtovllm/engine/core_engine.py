@@ -42,7 +42,7 @@ class CoreEngine:
 
         # static block_size
         block_size = int(block_size)
-        if block_size != 64:
+        if block_size != 16:
             raise NotImplementedError(
                 f"Dynamic block sizes are not yet supported (got {block_size}). "
                 "Please set block_size=64 "

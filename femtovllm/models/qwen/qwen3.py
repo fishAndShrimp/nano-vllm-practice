@@ -10,6 +10,7 @@ from tqdm import tqdm
 from transformers import Qwen3Config
 
 import femtovllm
+import femtovllm.ops
 from femtovllm.protocol import VarlenAttnMetadata
 
 
@@ -207,7 +208,6 @@ class QwenSelfAttention(nn.Module):
         n_heads = self.n_heads
         n_kv_heads = self.n_kv_heads
         d_head = self.d_head
-        n_rep = self.n_rep
 
         # (seqlen_total, H, D)
         # no longer transpose
@@ -234,7 +234,6 @@ class QwenSelfAttention(nn.Module):
         q = self.rotary_embd(q, varlen_attn_metadata.positions)
         k = self.rotary_embd(k, varlen_attn_metadata.positions)
 
-        attn = []
         for batch in range(B):
             begin = varlen_attn_metadata.raw_cu_seqlens[batch]
             end = varlen_attn_metadata.raw_cu_seqlens[batch + 1]
@@ -242,111 +241,60 @@ class QwenSelfAttention(nn.Module):
             raw_block_table = varlen_attn_metadata.raw_block_tables[batch]
             _, _, block_size, _ = k_cache_pool.shape
 
-            # (T, H, D)
-            i_q = q[begin:end]
-            T, _, _ = i_q.shape
-            # (H, T, D)
-            i_q = i_q.transpose(0, 1)
-
-            # (H, kv_len, D)
-            # reuse and append cache
-            # cat in kv_len (dim=1)
-            i_k = []
-            i_v = []
-
             remaining_cache = varlen_attn_metadata.raw_positions[begin]
+            num_blocks_skip = remaining_cache // block_size
+            remaining_cache %= block_size
+
             p_begin = begin
-            for block_index in raw_block_table:
+            for block_index in raw_block_table[num_blocks_skip:]:
                 if block_index < 0:
                     break
                 if p_begin >= end:
                     break
 
-                if remaining_cache < block_size:
-                    # current block has empty slots
-                    # start to cache more
-                    num_new_tokens = min(
-                        # empty slots in current block
-                        block_size - remaining_cache,
-                        # remaining new kv
-                        end - p_begin,
-                    )
+                # current block must have empty slots
+                # start to cache more
+                num_new_tokens = min(
+                    # empty slots in current block
+                    block_size - remaining_cache,
+                    # remaining new kv
+                    end - p_begin,
+                )
 
-                    # (T, n_kv_heads, D)
-                    # transpose
-                    # (n_kv_heads, T, D)
-                    k_cache_pool[
-                        block_index,
-                        :,
-                        remaining_cache : remaining_cache + num_new_tokens,
-                    ] = k[p_begin : p_begin + num_new_tokens].transpose(0, 1)
-                    v_cache_pool[
-                        block_index,
-                        :,
-                        remaining_cache : remaining_cache + num_new_tokens,
-                    ] = v[p_begin : p_begin + num_new_tokens].transpose(0, 1)
+                # (T, n_kv_heads, D)
+                # transpose
+                # (n_kv_heads, T, D)
+                k_cache_pool[
+                    block_index,
+                    :,
+                    remaining_cache : remaining_cache + num_new_tokens,
+                ] = k[p_begin : p_begin + num_new_tokens].transpose(0, 1)
+                v_cache_pool[
+                    block_index,
+                    :,
+                    remaining_cache : remaining_cache + num_new_tokens,
+                ] = v[p_begin : p_begin + num_new_tokens].transpose(0, 1)
 
-                    remaining_cache += num_new_tokens
-                    p_begin += num_new_tokens
+                remaining_cache += num_new_tokens
+                p_begin += num_new_tokens
 
-                    i_k.append(k_cache_pool[block_index, :, :remaining_cache])
-                    i_v.append(v_cache_pool[block_index, :, :remaining_cache])
-                else:
-                    i_k.append(k_cache_pool[block_index])
-                    i_v.append(v_cache_pool[block_index])
                 remaining_cache -= block_size
 
-            # (n_kv_heads, T, D)
-            # cat
-            # (n_kv_heads, kv_len, D)
-            i_k = torch.cat(i_k, dim=1)
-            i_v = torch.cat(i_v, dim=1)
-
-            # (n_kv_heads, kv_len, D)
-            # replicate kv
-            # (n_kv_heads, n_rep, kv_len, D)
-            # reshape
-            # (H, kv_len, D)
-            #
-            # [CRITICAL: The Replica Manner for GQA]
-            # We must replicate the SAME kv_head `n_rep` times consecutively so that
-            # the first `n_rep` query heads share the exact same kv_head.
-            #
-            # Example: 4 Q_heads, 2 KV_heads (n_rep = 2)
-            # CORRECT memory layout after reshape: [KV0, KV0, KV1, KV1]
-            #   -> Q0 matches KV0, Q1 matches KV0 | Q2 matches KV1, Q3 matches KV1
-            #
-            # WRONG layout (if unsqueeze(0) was used): [KV0, KV1, KV0, KV1]
-            #   -> Q1 would wrongly match KV1, causing severe feature mismatch.
-            i_k_rep = (
-                i_k.unsqueeze(1)
-                .expand(n_kv_heads, n_rep, -1, d_head)
-                .reshape(n_kv_heads * n_rep, -1, d_head)
-            )
-            i_v_rep = (
-                i_v.unsqueeze(1)
-                .expand(n_kv_heads, n_rep, -1, d_head)
-                .reshape(n_kv_heads * n_rep, -1, d_head)
-            )
-            _, kv_len, _ = i_k_rep.shape
-
-            # (H, T, D)
-            i_attn = F.scaled_dot_product_attention(
-                # (H, T, D)
-                i_q,
-                # (H, kv_len, D)
-                i_k_rep,
-                i_v_rep,
-                attn_mask=self.gen_right_bottom_attn_mask(T, kv_len, x.device),
-                dropout_p=(self.dropout_p if self.training else 0.0),
-            )
-            # (T, C) = (T, H*D)
-            i_attn = i_attn.transpose(0, 1).contiguous().view(T, n_heads * d_head)
-
-            attn.append(i_attn)
-
-        # (seqlen_total, C)
-        attn = torch.cat(attn, dim=0)
+        # (H, q_len_flatten, D)
+        attn = femtovllm.ops.paged_attention_gemm(
+            # (q_len_flatten, H, D)
+            # (H, q_len_flatten, D)
+            q=q.transpose(0, 1),
+            k_pool=k_cache_pool,
+            v_pool=v_cache_pool,
+            cu_seqlens=varlen_attn_metadata.cu_seqlens,
+            q_len_max=varlen_attn_metadata.q_len_max,
+            kv_page_tables=varlen_attn_metadata.block_tables,
+            kv_lens=varlen_attn_metadata.kv_lens,
+            positions=varlen_attn_metadata.positions,
+        )
+        # (q_len_flatten, C)
+        attn = attn.transpose(0, 1).contiguous().view(seqlen_total, n_heads * d_head)
 
         return self.o_proj(attn), None
 
