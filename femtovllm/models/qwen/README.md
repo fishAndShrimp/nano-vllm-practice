@@ -102,7 +102,7 @@ class QwenModel(nn.Module):
                     d_model=config.hidden_size,
                     n_heads=config.num_attention_heads,
                     n_kv_heads=config.num_key_value_heads,
-                    max_seq_len=config.max_position_embeddings,
+                    max_seqlen=config.max_position_embeddings,
                     intermediate_size=config.intermediate_size,
                 )
                 for _ in range(config.num_hidden_layers)

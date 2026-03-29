@@ -21,7 +21,7 @@ class QwenRotaryEmbedding(nn.Module):
 
     def __init__(
         self,
-        max_seq_len: int,
+        max_seqlen: int,
         d_head: int,
         base: float = 1000000.0,
         device: str = None,
@@ -36,14 +36,17 @@ class QwenRotaryEmbedding(nn.Module):
         inv_freq = 2 * inv_freq / d_head
         inv_freq = (1.0 / base) ** (inv_freq)
 
-        # (T, D//2)
-        theta = torch.arange(max_seq_len, device=device).float()
+        #####
+        # seqlen: q_len or kv_len
+        #####
+        # (seqlen, D//2)
+        theta = torch.arange(max_seqlen, device=device).float()
         theta = theta[:, None] * inv_freq[None, :]
 
-        # (T, D)
+        # (seqlen, D)
         theta = torch.cat((theta, theta), dim=-1)
 
-        # (T, D)
+        # (seqlen, D)
         self.register_buffer("sin", torch.sin(theta), persistent=False)
         self.register_buffer("cos", torch.cos(theta), persistent=False)
 
@@ -59,10 +62,10 @@ class QwenRotaryEmbedding(nn.Module):
         input tensor `q_or_k`, enforcing strict type checks for the `positions` argument.
 
         1. Standard Padded Mode (4D)
-            - q_or_k shape: `(B, H, T, D)`
+            - q_or_k shape: `(B, H, seqlen, D)`
             - positions: Must be `int` or `None`.
-                - If `None`: Rotates using positions `[0 : T]`.
-                - If `int` (e.g., p): Rotates using positions `[p : p + T]` (useful for decoding).
+                - If `None`: Rotates using positions `[0 : seqlen]`.
+                - If `int` (e.g., p): Rotates using positions `[p : p + seqlen]` (useful for decoding).
 
         2. Varlen / FlashAttention Mode (3D)
             - q_or_k shape: `(q_len_flatten, H, D)`
@@ -82,7 +85,7 @@ class QwenRotaryEmbedding(nn.Module):
                           for the detected operating mode (3D vs 4D).
         """
 
-        # (B, H, T, D)
+        # (B, H, seqlen, D)
         # or (q_len_flatten, H, D) varlen
         is_varlen = q_or_k.dim() == 3
 
@@ -110,24 +113,24 @@ class QwenRotaryEmbedding(nn.Module):
             w_sin = w_sin[:, None, :]
             w_cos = w_cos[:, None, :]
         else:
-            _, _, T, _ = q_or_k.shape
+            _, _, seqlen, _ = q_or_k.shape
 
-            # (T, D)
+            # (seqlen, D)
             if isinstance(positions, int):
-                w_sin = self.sin[positions : positions + T]
-                w_cos = self.cos[positions : positions + T]
+                w_sin = self.sin[positions : positions + seqlen]
+                w_cos = self.cos[positions : positions + seqlen]
             else:
-                w_sin = self.sin[:T]
-                w_cos = self.cos[:T]
+                w_sin = self.sin[:seqlen]
+                w_cos = self.cos[:seqlen]
 
-            # (1, 1, T, D)
+            # (1, 1, seqlen, D)
             w_sin = w_sin[None, None, ...]
             w_cos = w_cos[None, None, ...]
 
         # [STEP: broadcast]
-        # (B, H, T, D)
+        # (B, H, seqlen, D)
         # *
-        # (1, 1, T, D)
+        # (1, 1, seqlen, D)
         # or
         # (q_len_flatten, H, D) varlen
         # *
@@ -148,7 +151,7 @@ class QwenSelfAttention(nn.Module):
         d_model: int,
         n_heads: int,
         n_kv_heads: int,
-        max_seq_len: int,
+        max_seqlen: int,
         dropout_p: float = 0.1,
         config: Qwen3Config = None,
     ):
@@ -178,7 +181,7 @@ class QwenSelfAttention(nn.Module):
         rms_norm_eps = 1e-6 if (config is None) else config.rms_norm_eps
         self.q_norm = nn.RMSNorm(d_head, eps=rms_norm_eps)
         self.k_norm = nn.RMSNorm(d_head, eps=rms_norm_eps)
-        self.rotary_embd = QwenRotaryEmbedding(max_seq_len, d_head)
+        self.rotary_embd = QwenRotaryEmbedding(max_seqlen, d_head)
 
         self.o_proj = nn.Linear(n_heads * d_head, d_model, bias=False)
 
@@ -587,7 +590,7 @@ class QwenDecoderLayer(nn.Module):
         d_model: int,
         n_heads: int,
         n_kv_heads: int,
-        max_seq_len: int,
+        max_seqlen: int,
         intermediate_size: int,
         dropout_p: float = 0.1,
         config: Qwen3Config = None,
@@ -600,7 +603,7 @@ class QwenDecoderLayer(nn.Module):
             d_model=d_model,
             n_heads=n_heads,
             n_kv_heads=n_kv_heads,
-            max_seq_len=max_seq_len,
+            max_seqlen=max_seqlen,
             dropout_p=dropout_p,
             config=config,
         )
@@ -662,7 +665,7 @@ class QwenModel(nn.Module):
                     d_model=config.hidden_size,
                     n_heads=config.num_attention_heads,
                     n_kv_heads=config.num_key_value_heads,
-                    max_seq_len=config.max_position_embeddings,
+                    max_seqlen=config.max_position_embeddings,
                     intermediate_size=config.intermediate_size,
                     config=config,
                 )
