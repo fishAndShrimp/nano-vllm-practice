@@ -235,21 +235,21 @@ class QwenSelfAttention(nn.Module):
         k = self.rotary_embd(k, varlen_attn_metadata.positions)
 
         for batch in range(B):
-            begin = varlen_attn_metadata.raw_cu_seqlens[batch]
-            end = varlen_attn_metadata.raw_cu_seqlens[batch + 1]
+            q_begin = varlen_attn_metadata.raw_cu_seqlens[batch]
+            q_end = varlen_attn_metadata.raw_cu_seqlens[batch + 1]
 
             raw_block_table = varlen_attn_metadata.raw_block_tables[batch]
             _, _, block_size, _ = k_cache_pool.shape
 
-            remaining_cache = varlen_attn_metadata.raw_positions[begin]
+            remaining_cache = varlen_attn_metadata.raw_positions[q_begin]
             num_blocks_skip = remaining_cache // block_size
             remaining_cache %= block_size
 
-            p_begin = begin
+            q_curr = q_begin
             for block_index in raw_block_table[num_blocks_skip:]:
                 if block_index < 0:
                     break
-                if p_begin >= end:
+                if q_curr >= q_end:
                     break
 
                 # current block must have empty slots
@@ -258,7 +258,7 @@ class QwenSelfAttention(nn.Module):
                     # empty slots in current block
                     block_size - remaining_cache,
                     # remaining new kv
-                    end - p_begin,
+                    q_end - q_curr,
                 )
 
                 # (T, n_kv_heads, D)
@@ -268,15 +268,15 @@ class QwenSelfAttention(nn.Module):
                     block_index,
                     :,
                     remaining_cache : remaining_cache + num_new_tokens,
-                ] = k[p_begin : p_begin + num_new_tokens].transpose(0, 1)
+                ] = k[q_curr : q_curr + num_new_tokens].transpose(0, 1)
                 v_cache_pool[
                     block_index,
                     :,
                     remaining_cache : remaining_cache + num_new_tokens,
-                ] = v[p_begin : p_begin + num_new_tokens].transpose(0, 1)
+                ] = v[q_curr : q_curr + num_new_tokens].transpose(0, 1)
 
                 remaining_cache += num_new_tokens
-                p_begin += num_new_tokens
+                q_curr += num_new_tokens
 
                 remaining_cache -= block_size
 
@@ -341,14 +341,14 @@ class QwenSelfAttention(nn.Module):
 
         attn = []
         for batch in range(B):
-            begin = varlen_attn_metadata.raw_cu_seqlens[batch]
-            end = varlen_attn_metadata.raw_cu_seqlens[batch + 1]
+            q_begin = varlen_attn_metadata.raw_cu_seqlens[batch]
+            q_end = varlen_attn_metadata.raw_cu_seqlens[batch + 1]
 
             raw_block_table = varlen_attn_metadata.raw_block_tables[batch]
             _, _, block_size, _ = k_cache_pool.shape
 
             # (T, H, D)
-            i_q = q[begin:end]
+            i_q = q[q_begin:q_end]
             T, _, _ = i_q.shape
             # (H, T, D)
             i_q = i_q.transpose(0, 1)
@@ -359,12 +359,12 @@ class QwenSelfAttention(nn.Module):
             i_k = []
             i_v = []
 
-            remaining_cache = varlen_attn_metadata.raw_positions[begin]
-            p_begin = begin
+            remaining_cache = varlen_attn_metadata.raw_positions[q_begin]
+            q_curr = q_begin
             for block_index in raw_block_table:
                 if block_index < 0:
                     break
-                if p_begin >= end:
+                if q_curr >= q_end:
                     break
 
                 if remaining_cache < block_size:
@@ -374,7 +374,7 @@ class QwenSelfAttention(nn.Module):
                         # empty slots in current block
                         block_size - remaining_cache,
                         # remaining new kv
-                        end - p_begin,
+                        q_end - q_curr,
                     )
 
                     # (T, n_kv_heads, D)
@@ -384,15 +384,15 @@ class QwenSelfAttention(nn.Module):
                         block_index,
                         :,
                         remaining_cache : remaining_cache + num_new_tokens,
-                    ] = k[p_begin : p_begin + num_new_tokens].transpose(0, 1)
+                    ] = k[q_curr : q_curr + num_new_tokens].transpose(0, 1)
                     v_cache_pool[
                         block_index,
                         :,
                         remaining_cache : remaining_cache + num_new_tokens,
-                    ] = v[p_begin : p_begin + num_new_tokens].transpose(0, 1)
+                    ] = v[q_curr : q_curr + num_new_tokens].transpose(0, 1)
 
                     remaining_cache += num_new_tokens
-                    p_begin += num_new_tokens
+                    q_curr += num_new_tokens
 
                     i_k.append(k_cache_pool[block_index, :, :remaining_cache])
                     i_v.append(v_cache_pool[block_index, :, :remaining_cache])
