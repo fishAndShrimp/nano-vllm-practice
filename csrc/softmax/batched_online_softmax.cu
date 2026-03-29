@@ -4,7 +4,7 @@
 
 #include "../utils/cuda_check.cuh"
 
-constexpr int kBlockSize = 256;
+constexpr int kThreadsPerBlock = 256;
 
 template <typename scalar_t>
 __global__ void BatchedOnlineSoftmaxKernel(
@@ -19,7 +19,7 @@ __global__ void BatchedOnlineSoftmaxKernel(
     const scalar_t* a = batched_a + blockIdx.x * size;
     scalar_t* b = batched_b + blockIdx.x * size;
 
-    __shared__ scalar_t sdata[kBlockSize];
+    __shared__ scalar_t sdata[kThreadsPerBlock];
 
     int lx = threadIdx.x;
 
@@ -103,7 +103,7 @@ torch::Tensor BatchedOnlineSoftmaxCuda(torch::Tensor a) {
             BatchedOnlineSoftmaxKernel<scalar_t><<<
                 //
                 batches,
-                kBlockSize>>>(
+                kThreadsPerBlock>>>(
                 a.data_ptr<scalar_t>(),
                 b.data_ptr<scalar_t>(),
                 size,

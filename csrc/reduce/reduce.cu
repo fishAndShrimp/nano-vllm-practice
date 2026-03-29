@@ -4,7 +4,7 @@
 
 #include "../utils/cuda_check.cuh"
 
-constexpr int kBlockSize = 1024;
+constexpr int kThreadsPerBlock = 1024;
 
 template <typename scalar_t>
 __global__ void ReduceKernel(
@@ -12,7 +12,7 @@ __global__ void ReduceKernel(
     scalar_t* __restrict__ b,
     int size
 ) {
-    __shared__ scalar_t sdata[kBlockSize];
+    __shared__ scalar_t sdata[kThreadsPerBlock];
 
     int lx = threadIdx.x;
     int gx = blockDim.x * blockIdx.x + lx;
@@ -41,7 +41,7 @@ __global__ void ReduceKernel(
 torch::Tensor ReduceCuda(torch::Tensor a) {
     TORCH_CHECK_EQ(a.is_cuda(), true);
     TORCH_CHECK_EQ(a.is_contiguous(), true);
-    TORCH_CHECK_EQ(a.numel() <= kBlockSize, true);
+    TORCH_CHECK_EQ(a.numel() <= kThreadsPerBlock, true);
 
     auto b = torch::empty(
         //
@@ -57,7 +57,7 @@ torch::Tensor ReduceCuda(torch::Tensor a) {
         a.scalar_type(),
         "ReduceCuda",
         ([&] {
-            ReduceKernel<scalar_t><<<1, kBlockSize>>>(
+            ReduceKernel<scalar_t><<<1, kThreadsPerBlock>>>(
                 a.data_ptr<scalar_t>(),
                 b.data_ptr<scalar_t>(),
                 size

@@ -4,7 +4,7 @@
 
 #include "../utils/cuda_check.cuh"
 
-constexpr int kBlockSize = 256;
+constexpr int kThreadsPerBlock = 256;
 
 template <typename scalar_t>
 __global__ void SafeSoftmaxKernel(
@@ -12,7 +12,7 @@ __global__ void SafeSoftmaxKernel(
     scalar_t* __restrict__ b,
     int size
 ) {
-    __shared__ scalar_t sdata[kBlockSize];
+    __shared__ scalar_t sdata[kThreadsPerBlock];
 
     int lx = threadIdx.x;
 
@@ -86,7 +86,7 @@ torch::Tensor SafeSoftmaxCuda(torch::Tensor a) {
             SafeSoftmaxKernel<scalar_t><<<
                 //
                 1,
-                kBlockSize>>>(
+                kThreadsPerBlock>>>(
                 a.data_ptr<scalar_t>(),
                 b.data_ptr<scalar_t>(),
                 a.numel()

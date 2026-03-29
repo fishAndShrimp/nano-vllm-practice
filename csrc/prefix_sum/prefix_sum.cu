@@ -4,7 +4,7 @@
 
 #include "../utils/cuda_check.cuh"
 
-constexpr int kBlockSize = 1024;
+constexpr int kThreadsPerBlock = 1024;
 
 template <typename scalar_t>
 __global__ void PrefixSumKernel(
@@ -12,7 +12,7 @@ __global__ void PrefixSumKernel(
     scalar_t* __restrict__ b,
     int size
 ) {
-    __shared__ scalar_t sdata[kBlockSize + 1];
+    __shared__ scalar_t sdata[kThreadsPerBlock + 1];
 
     auto lx = threadIdx.x;
     auto gx = blockDim.x * blockIdx.x + lx;
@@ -59,11 +59,11 @@ __global__ void PrefixSumKernel(
 torch::Tensor PrefixSumCuda(torch::Tensor a) {
     TORCH_CHECK_EQ(a.is_cuda(), true);
     TORCH_CHECK_EQ(a.is_contiguous(), true);
-    TORCH_CHECK_EQ(a.numel() <= kBlockSize, true);
+    TORCH_CHECK_EQ(a.numel() <= kThreadsPerBlock, true);
 
     auto b = torch::empty_like(a);
 
-    int threads = kBlockSize;
+    int threads = kThreadsPerBlock;
     TORCH_CHECK_EQ((threads & (threads - 1)) == 0, true);
 
     AT_DISPATCH_FLOATING_TYPES_AND2(
