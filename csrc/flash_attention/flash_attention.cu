@@ -2,10 +2,11 @@
 #include <cuda_runtime.h>
 #include <torch/extension.h>
 
+#include "../utils/constants.cuh"
 #include "../utils/cuda_check.cuh"
 
-constexpr int kTileSize = 32;
-constexpr int kDimHead = 128;
+using femtovllm::kDimHead;
+using femtovllm::kTileSize;
 
 template <typename scalar_t>
 __global__ void FlashAttentionKernel(
@@ -95,14 +96,23 @@ __global__ void FlashAttentionKernel(
 #pragma unroll
         for (int lx = 0; lx < kTileSize; lx++) {
             sw[lx] /= sqrt_c;
+
+            // !!! [CRITICAL: MASKING] !!!
+            // -INF must be given before calc m_new
+            auto gx = kTileSize * tile_idx + lx;
+            if (!(gx < dim_t)) {
+                sw[lx] = -INFINITY;
+            }
+
             m_new = max(m_new, sw[lx]);
         }
 
         // [STEP: maintain with m_new]
-        sum_softmax *= exp(m_softmax - m_new);
+        auto exp_delta = exp(m_softmax - m_new);
+        sum_softmax *= exp_delta;
 #pragma unroll
         for (int c = 0; c < kDimHead; c++) {
-            hidden[c] *= exp(m_softmax - m_new);
+            hidden[c] *= exp_delta;
         }
         m_softmax = m_new;
 
