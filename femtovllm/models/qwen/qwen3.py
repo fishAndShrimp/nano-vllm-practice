@@ -264,9 +264,9 @@ class QwenSelfAttention(nn.Module):
                     q_end - q_curr,
                 )
 
-                # (T, n_kv_heads, D)
+                # (seqlen, n_kv_heads, D)
                 # transpose
-                # (n_kv_heads, T, D)
+                # (n_kv_heads, seqlen, D)
                 k_cache_pool[
                     block_index,
                     :,
@@ -380,9 +380,9 @@ class QwenSelfAttention(nn.Module):
                         q_end - q_curr,
                     )
 
-                    # (T, n_kv_heads, D)
+                    # (seqlen, n_kv_heads, D)
                     # transpose
-                    # (n_kv_heads, T, D)
+                    # (n_kv_heads, seqlen, D)
                     k_cache_pool[
                         block_index,
                         :,
@@ -404,7 +404,7 @@ class QwenSelfAttention(nn.Module):
                     i_v.append(v_cache_pool[block_index])
                 remaining_cache -= block_size
 
-            # (n_kv_heads, T, D)
+            # (n_kv_heads, seqlen, D)
             # cat
             # (n_kv_heads, kv_len, D)
             i_k = torch.cat(i_k, dim=1)
@@ -773,7 +773,7 @@ class QwenForCausalLM(nn.Module):
 
     def forward_varlen(
         self,
-        # (T)
+        # (q_len_flatten,)
         idx_flatten: torch.Tensor,
         varlen_attn_metadata: VarlenAttnMetadata,
     ):
@@ -803,7 +803,7 @@ class QwenForCausalLM(nn.Module):
 
     def _forward_varlen_fake(
         self,
-        # (T)
+        # (q_len_flatten,)
         idx_flatten: torch.Tensor,
         varlen_attn_metadata: VarlenAttnMetadata,
     ):
