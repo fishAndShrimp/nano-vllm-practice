@@ -65,9 +65,9 @@ class QwenRotaryEmbedding(nn.Module):
                 - If `int` (e.g., p): Rotates using positions `[p : p + T]` (useful for decoding).
 
         2. Varlen / FlashAttention Mode (3D)
-            - q_or_k shape: `(seqlen_total, H, D)`
+            - q_or_k shape: `(q_len_flatten, H, D)`
             - positions: Must be a 1D `torch.Tensor`.
-                - Shape `(seqlen_total,)` containing the exact absolute position IDs
+                - Shape `(q_len_flatten,)` containing the exact absolute position IDs
                   for each token in the flattened batch.
 
         Args:
@@ -83,7 +83,7 @@ class QwenRotaryEmbedding(nn.Module):
         """
 
         # (B, H, T, D)
-        # or (seqlen_total, H, D) varlen
+        # or (q_len_flatten, H, D) varlen
         is_varlen = q_or_k.dim() == 3
 
         # [STEP: route checks]
@@ -103,10 +103,10 @@ class QwenRotaryEmbedding(nn.Module):
 
         # [STEP: pick sin and cos]
         if is_varlen:
-            # (seqlen_total, D) varlen
+            # (q_len_flatten, D) varlen
             w_sin = self.sin[positions]
             w_cos = self.cos[positions]
-            # (seqlen_total, 1, D) varlen
+            # (q_len_flatten, 1, D) varlen
             w_sin = w_sin[:, None, :]
             w_cos = w_cos[:, None, :]
         else:
@@ -129,9 +129,9 @@ class QwenRotaryEmbedding(nn.Module):
         # *
         # (1, 1, T, D)
         # or
-        # (seqlen_total, H, D) varlen
+        # (q_len_flatten, H, D) varlen
         # *
-        # (seqlen_total, 1, D) varlen
+        # (q_len_flatten, 1, D) varlen
         return w_cos * x_y + w_sin * ny_x
 
 
@@ -203,30 +203,30 @@ class QwenSelfAttention(nn.Module):
     ):
         """ """
         B = len(varlen_attn_metadata.block_tables)
-        seqlen_total, C = x.shape
+        q_len_flatten, C = x.shape
 
         n_heads = self.n_heads
         n_kv_heads = self.n_kv_heads
         d_head = self.d_head
 
-        # (seqlen_total, H, D)
+        # (q_len_flatten, H, D)
         # no longer transpose
         # ========================================================================
         # [CRITICAL: Optimal Memory Dataflow for Varlen Attention]
         # To eliminate memory movement overhead, we strictly defer any transpose
         # operations until the final caching stage. The elegant dataflow is:
         #
-        # 1. Projection: Linear layer outputs contiguous (seqlen_flatten, H * D).
-        # 2. Reshape: Zero-copy `.view()` into (seqlen_flatten, H, D).
-        # 3. RoPE: Applied in-place on (seqlen_flatten, H, D) without moving memory.
+        # 1. Projection: Linear layer outputs contiguous (q_len_flatten, H * D).
+        # 2. Reshape: Zero-copy `.view()` into (q_len_flatten, H, D).
+        # 3. RoPE: Applied in-place on (q_len_flatten, H, D) without moving memory.
         # 4. Caching (Final Destination): We only transpose at the exact moment of
         #    writing into the Paged KV Cache `[num_blocks, n_kv_heads, block_size, d_head]`.
         #    This allows PyTorch's underlying `copy_()` to fuse the memory rearrangement
         #    into a single step, avoiding expensive `.contiguous()` allocations.
         # ========================================================================
-        q = self.w_q(x).view(seqlen_total, n_heads, d_head)
-        k = self.w_k(x).view(seqlen_total, n_kv_heads, d_head)
-        v = self.w_v(x).view(seqlen_total, n_kv_heads, d_head)
+        q = self.w_q(x).view(q_len_flatten, n_heads, d_head)
+        k = self.w_k(x).view(q_len_flatten, n_kv_heads, d_head)
+        v = self.w_v(x).view(q_len_flatten, n_kv_heads, d_head)
 
         q = self.q_norm(q)
         k = self.k_norm(k)
@@ -294,7 +294,7 @@ class QwenSelfAttention(nn.Module):
             positions=varlen_attn_metadata.positions,
         )
         # (q_len_flatten, C)
-        attn = attn.transpose(0, 1).contiguous().view(seqlen_total, n_heads * d_head)
+        attn = attn.transpose(0, 1).contiguous().view(q_len_flatten, n_heads * d_head)
 
         return self.o_proj(attn), None
 
@@ -307,31 +307,31 @@ class QwenSelfAttention(nn.Module):
     ):
         """ """
         B = len(varlen_attn_metadata.block_tables)
-        seqlen_total, C = x.shape
+        q_len_flatten, C = x.shape
 
         n_heads = self.n_heads
         n_kv_heads = self.n_kv_heads
         d_head = self.d_head
         n_rep = self.n_rep
 
-        # (seqlen_total, H, D)
+        # (q_len_flatten, H, D)
         # no longer transpose
         # ========================================================================
         # [CRITICAL: Optimal Memory Dataflow for Varlen Attention]
         # To eliminate memory movement overhead, we strictly defer any transpose
         # operations until the final caching stage. The elegant dataflow is:
         #
-        # 1. Projection: Linear layer outputs contiguous (seqlen_flatten, H * D).
-        # 2. Reshape: Zero-copy `.view()` into (seqlen_flatten, H, D).
-        # 3. RoPE: Applied in-place on (seqlen_flatten, H, D) without moving memory.
+        # 1. Projection: Linear layer outputs contiguous (q_len_flatten, H * D).
+        # 2. Reshape: Zero-copy `.view()` into (q_len_flatten, H, D).
+        # 3. RoPE: Applied in-place on (q_len_flatten, H, D) without moving memory.
         # 4. Caching (Final Destination): We only transpose at the exact moment of
         #    writing into the Paged KV Cache `[num_blocks, n_kv_heads, block_size, d_head]`.
         #    This allows PyTorch's underlying `copy_()` to fuse the memory rearrangement
         #    into a single step, avoiding expensive `.contiguous()` allocations.
         # ========================================================================
-        q = self.w_q(x).view(seqlen_total, n_heads, d_head)
-        k = self.w_k(x).view(seqlen_total, n_kv_heads, d_head)
-        v = self.w_v(x).view(seqlen_total, n_kv_heads, d_head)
+        q = self.w_q(x).view(q_len_flatten, n_heads, d_head)
+        k = self.w_k(x).view(q_len_flatten, n_kv_heads, d_head)
+        v = self.w_v(x).view(q_len_flatten, n_kv_heads, d_head)
 
         q = self.q_norm(q)
         k = self.k_norm(k)
@@ -450,7 +450,7 @@ class QwenSelfAttention(nn.Module):
 
             attn.append(i_attn)
 
-        # (seqlen_total, C)
+        # (q_len_flatten, C)
         attn = torch.cat(attn, dim=0)
 
         return self.o_proj(attn), None
@@ -622,7 +622,7 @@ class QwenDecoderLayer(nn.Module):
     ):
         """ """
         # (B, T, C)
-        # or (seqlen_total, C) varlen
+        # or (q_len_flatten, C) varlen
         y, kv_cache = self.sa(
             self.input_layernorm(x),
             kv_cache=kv_cache,
@@ -684,7 +684,7 @@ class QwenModel(nn.Module):
         - all_kv_cache: legacy list[(k,v)] mechanism
         """
         # (B, T, C)
-        # or (seqlen_total, C) varlen
+        # or (q_len_flatten, C) varlen
         x = self.embed_tokens(idx)
 
         if all_kv_cache is None:
@@ -748,7 +748,7 @@ class QwenForCausalLM(nn.Module):
 
         WARNING: This method does NOT support varlen (flattened) inputs.
 
-        Applying the `lm_head` to an entire `(seqlen_total, C)` flattened tensor,
+        Applying the `lm_head` to an entire `(q_len_flatten, C)` flattened tensor,
         introduces massive computational waste,
         as we typically only need logits for the final token of each sequence.
 
@@ -774,7 +774,7 @@ class QwenForCausalLM(nn.Module):
         varlen_attn_metadata: VarlenAttnMetadata,
     ):
         """
-        - input.shape: (seqlen_total,)
+        - input.shape: (q_len_flatten,)
         - output.shape: (B, vocab_size)
         - B: len(cu_seqlens) - 1
         """
