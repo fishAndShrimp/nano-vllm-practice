@@ -15,13 +15,13 @@ __global__ void FlashAttentionCoalescedKernel(
     const scalar_t* __restrict__ v_batched,
     scalar_t* __restrict__ out_batched,
     int dim_t,
-    int dim_c
+    int dim_d
 ) {
     int batch_idx = (blockIdx.z) * gridDim.y + (blockIdx.y);
-    auto q = q_batched + dim_t * dim_c * batch_idx;
-    auto k_t = k_t_batched + dim_t * dim_c * batch_idx;
-    auto v = v_batched + dim_t * dim_c * batch_idx;
-    auto out = out_batched + dim_t * dim_c * batch_idx;
+    auto q = q_batched + dim_t * dim_d * batch_idx;
+    auto k_t = k_t_batched + dim_t * dim_d * batch_idx;
+    auto v = v_batched + dim_t * dim_d * batch_idx;
+    auto out = out_batched + dim_t * dim_d * batch_idx;
 
     scalar_t q_tile[kTileSize];
     // use previous k_tile to help load q and v
@@ -55,15 +55,15 @@ __global__ void FlashAttentionCoalescedKernel(
         }
 
         // [STEP: phases]
-        for (int phase = 0; kTileSize * phase < dim_c;
+        for (int phase = 0; kTileSize * phase < dim_d;
              phase++) {
             // [STEP: load q]
             for (int row = 0; row < kTileSize; row++) {
                 auto col = threadIdx.x;
                 if ((gy_base + row) < dim_t &&
-                    (kTileSize * phase + col) < dim_c) {
+                    (kTileSize * phase + col) < dim_d) {
                     sdata.q[row][col] =
-                        q[(gy_base + row) * dim_c +
+                        q[(gy_base + row) * dim_d +
                           (kTileSize * phase + col)];
                 } else {
                     sdata.q[row][col] =
@@ -80,7 +80,7 @@ __global__ void FlashAttentionCoalescedKernel(
             // [STEP: load k_t]
             for (int row = 0; row < kTileSize; row++) {
                 auto col = threadIdx.x;
-                if ((kTileSize * phase + row) < dim_c &&
+                if ((kTileSize * phase + row) < dim_d &&
                     (kTileSize * tile_idx + col) < dim_t) {
                     sdata.k[row][col] =
                         k_t[(kTileSize * phase + row) *
@@ -108,11 +108,11 @@ __global__ void FlashAttentionCoalescedKernel(
         }
 
         // [STEP: FIND m_new]
-        auto sqrt_c = static_cast<float>(sqrt(dim_c));
+        auto sqrt_d = static_cast<float>(sqrt(dim_d));
         auto m_new = m_softmax;
 #pragma unroll
         for (int lx = 0; lx < kTileSize; lx++) {
-            sw[lx] /= sqrt_c;
+            sw[lx] /= sqrt_d;
 
             // !!! [CRITICAL: MASKING] !!!
             // -INF must be given before calc m_new
@@ -156,16 +156,16 @@ __global__ void FlashAttentionCoalescedKernel(
         }
 
         // [STEP: phases]
-        for (int phase = 0; kTileSize * phase < dim_c;
+        for (int phase = 0; kTileSize * phase < dim_d;
              phase++) {
             // [STEP: load v]
             for (int row = 0; row < kTileSize; row++) {
                 auto col = threadIdx.x;
                 if ((kTileSize * tile_idx + row) < dim_t &&
-                    (kTileSize * phase + col) < dim_c) {
+                    (kTileSize * phase + col) < dim_d) {
                     sdata.v[row][col] =
                         v[(kTileSize * tile_idx + row) *
-                              dim_c +
+                              dim_d +
                           (kTileSize * phase + col)];
                 } else {
                     sdata.v[row][col] =
@@ -208,8 +208,8 @@ __global__ void FlashAttentionCoalescedKernel(
 
 #pragma unroll
     for (int c = 0; c < kDimHead; c++) {
-        if ((gy) < dim_t && (c) < dim_c) {
-            out[gy * dim_c + c] = static_cast<scalar_t>(
+        if ((gy) < dim_t && (c) < dim_d) {
+            out[gy * dim_d + c] = static_cast<scalar_t>(
                 hidden[c] / sum_softmax
             );
         }
@@ -218,8 +218,8 @@ __global__ void FlashAttentionCoalescedKernel(
     //     // [DEBUG: output without sum_softmax]
     // #pragma unroll
     //     for (int c = 0; c < kDimHead; c++) {
-    //         if ((gy) < dim_t && (c) < dim_c) {
-    //             out[gy * dim_c + c] = hidden[c];
+    //         if ((gy) < dim_t && (c) < dim_d) {
+    //             out[gy * dim_d + c] = hidden[c];
     //         }
     //     }
 }
@@ -246,12 +246,13 @@ torch::Tensor FlashAttentionCoalescedCuda(
 
     int dim_b = q.size(0);
     int dim_h = q.size(1);
+    // dim_t == T == q_len
     int dim_t = q.size(2);
-    int dim_c = q.size(3);
-    TORCH_CHECK_LE(dim_c, kDimHead);
+    int dim_d = q.size(3);
+    TORCH_CHECK_LE(dim_d, kDimHead);
 
     auto out = torch::empty(
-        {dim_b, dim_h, dim_t, dim_c},
+        {dim_b, dim_h, dim_t, dim_d},
         q.options()
     );
     auto k_t = k.transpose(-2, -1).contiguous();
@@ -274,7 +275,7 @@ torch::Tensor FlashAttentionCoalescedCuda(
                     v.data_ptr<scalar_t>(),
                     out.data_ptr<scalar_t>(),
                     dim_t,
-                    dim_c
+                    dim_d
                 );
             CUDA_CHECK(cudaGetLastError());
             cudaDeviceSynchronize();

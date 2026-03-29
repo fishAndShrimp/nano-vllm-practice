@@ -15,13 +15,13 @@ __global__ void FlashAttentionKernel(
     const scalar_t* __restrict__ v_batched,
     scalar_t* __restrict__ out_batched,
     int dim_t,
-    int dim_c
+    int dim_d
 ) {
     int batch_idx = (blockIdx.z) * gridDim.y + (blockIdx.y);
-    auto q = q_batched + dim_t * dim_c * batch_idx;
-    auto k_t = k_t_batched + dim_t * dim_c * batch_idx;
-    auto v = v_batched + dim_t * dim_c * batch_idx;
-    auto out = out_batched + dim_t * dim_c * batch_idx;
+    auto q = q_batched + dim_t * dim_d * batch_idx;
+    auto k_t = k_t_batched + dim_t * dim_d * batch_idx;
+    auto v = v_batched + dim_t * dim_d * batch_idx;
+    auto out = out_batched + dim_t * dim_d * batch_idx;
 
     scalar_t q_tile[kTileSize];
     __shared__ scalar_t k_tile[kTileSize][kTileSize + 1];
@@ -48,14 +48,14 @@ __global__ void FlashAttentionKernel(
             sw[lx] = 0.0;
         }
 
-        for (int phase = 0; kTileSize * phase < dim_c;
+        for (int phase = 0; kTileSize * phase < dim_d;
              phase++) {
 #pragma unroll
             for (int lx = 0; lx < kTileSize; lx++) {
                 if ((gy) < dim_t &&
-                    (kTileSize * phase + lx) < dim_c) {
+                    (kTileSize * phase + lx) < dim_d) {
                     q_tile[lx] =
-                        q[(gy)*dim_c +
+                        q[(gy)*dim_d +
                           (kTileSize * phase + lx)];
                 } else {
                     q_tile[lx] = static_cast<scalar_t>(0);
@@ -64,7 +64,7 @@ __global__ void FlashAttentionKernel(
 
             for (int row = 0; row < kTileSize; row++) {
                 auto col = threadIdx.x;
-                if ((kTileSize * phase + row) < dim_c &&
+                if ((kTileSize * phase + row) < dim_d &&
                     (kTileSize * tile_idx + col) < dim_t) {
                     k_tile[row][col] =
                         k_t[(kTileSize * phase + row) *
@@ -91,11 +91,11 @@ __global__ void FlashAttentionKernel(
         }
 
         // [STEP: FIND m_new]
-        auto sqrt_c = static_cast<float>(sqrt(dim_c));
+        auto sqrt_d = static_cast<float>(sqrt(dim_d));
         auto m_new = m_softmax;
 #pragma unroll
         for (int lx = 0; lx < kTileSize; lx++) {
-            sw[lx] /= sqrt_c;
+            sw[lx] /= sqrt_d;
 
             // !!! [CRITICAL: MASKING] !!!
             // -INF must be given before calc m_new
@@ -145,9 +145,9 @@ __global__ void FlashAttentionKernel(
             auto weight = sw[lx];
 #pragma unroll
             for (int c = 0; c < kDimHead; c++) {
-                if ((gx) < dim_t && (c) < dim_c) {
+                if ((gx) < dim_t && (c) < dim_d) {
                     hidden[c] +=
-                        weight * v[(gx)*dim_c + (c)];
+                        weight * v[(gx)*dim_d + (c)];
                 }
             }
         }
@@ -164,8 +164,8 @@ __global__ void FlashAttentionKernel(
 
 #pragma unroll
     for (int c = 0; c < kDimHead; c++) {
-        if ((gy) < dim_t && (c) < dim_c) {
-            out[gy * dim_c + c] = static_cast<scalar_t>(
+        if ((gy) < dim_t && (c) < dim_d) {
+            out[gy * dim_d + c] = static_cast<scalar_t>(
                 hidden[c] / sum_softmax
             );
         }
@@ -174,8 +174,8 @@ __global__ void FlashAttentionKernel(
     //     // [DEBUG: output without sum_softmax]
     // #pragma unroll
     //     for (int c = 0; c < kDimHead; c++) {
-    //         if ((gy) < dim_t && (c) < dim_c) {
-    //             out[gy * dim_c + c] = hidden[c];
+    //         if ((gy) < dim_t && (c) < dim_d) {
+    //             out[gy * dim_d + c] = hidden[c];
     //         }
     //     }
 }
@@ -202,12 +202,13 @@ torch::Tensor FlashAttentionCuda(
 
     int dim_b = q.size(0);
     int dim_h = q.size(1);
+    // dim_t == T == q_len
     int dim_t = q.size(2);
-    int dim_c = q.size(3);
-    TORCH_CHECK_LE(dim_c, kDimHead);
+    int dim_d = q.size(3);
+    TORCH_CHECK_LE(dim_d, kDimHead);
 
     auto out = torch::empty(
-        {dim_b, dim_h, dim_t, dim_c},
+        {dim_b, dim_h, dim_t, dim_d},
         q.options()
     );
     auto k_t = k.transpose(-2, -1).contiguous();
@@ -230,7 +231,7 @@ torch::Tensor FlashAttentionCuda(
                     v.data_ptr<scalar_t>(),
                     out.data_ptr<scalar_t>(),
                     dim_t,
-                    dim_c
+                    dim_d
                 );
             CUDA_CHECK(cudaGetLastError());
             cudaDeviceSynchronize();

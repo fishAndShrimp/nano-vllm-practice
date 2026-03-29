@@ -144,11 +144,11 @@ __global__ void PagedAttentionGemmKernel(
         // [STEP: SCALE by sqrt(dim_d)]
         // [STEP: MASK by -INF]
         // [STEP: FIND m_new]
-        auto sqrt_c = static_cast<float>(sqrt(dim_d));
+        auto sqrt_d = static_cast<float>(sqrt(dim_d));
         auto m_new = m_softmax;
 #pragma unroll
         for (int lx = 0; lx < kTileSize; lx++) {
-            sw[lx] /= sqrt_c;
+            sw[lx] /= sqrt_d;
 
             // !!! [CRITICAL: MASKING] !!!
             // -INF must be given before calc m_new
