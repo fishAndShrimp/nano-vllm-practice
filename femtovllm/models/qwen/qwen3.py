@@ -515,11 +515,12 @@ class QwenSelfAttention(nn.Module):
             k = torch.cat((k_past, k), dim=-2)
             v = torch.cat((v_past, v), dim=-2)
 
-        # [CRITICAL auto -1 length]
-        # seqlen is no longer T
-        # e.g. When decoding,
-        # q.T is still 1,
-        # but k.kv_len and v.kv_len is (kv_past_len + 1)
+        # [CRITICAL: auto-infer kv_len with -1]
+        # The KV sequence length is no longer equal to Query length (T).
+        # e.g., When decoding:
+        # - Query length is 1
+        # - KV length is (past_kv_len + 1)
+        # Using -1 allows safe expansion and reshaping for dynamic KV lengths.
         k_rep = (
             k.unsqueeze(2)
             .expand(B, n_kv_heads, n_rep, -1, d_head)

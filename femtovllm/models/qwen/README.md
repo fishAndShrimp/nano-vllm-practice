@@ -39,8 +39,12 @@ out = F.scaled_dot_product_attention(
 use expand and -1
 
 ```python
-# [CRITICAL -1]
-# seqlen is no longer T
+# [CRITICAL: auto-infer kv_len with -1]
+# The KV sequence length is no longer equal to Query length (T).
+# e.g., When decoding:
+# - Query length is 1
+# - KV length is (past_kv_len + 1)
+# Using -1 allows safe expansion and reshaping for dynamic KV lengths.
 k_rep = (
     k.unsqueeze(2)
     .expand(B, n_kv_heads, n_rep, -1, d_head)
@@ -51,6 +55,7 @@ v_rep = (
     .expand(B, n_kv_heads, n_rep, -1, d_head)
     .reshape(B, n_kv_heads * n_rep, -1, d_head)
 )
+_, _, kv_len, _ = k_rep.shape
 
 # (B, H, T, D)
 out = F.scaled_dot_product_attention(
@@ -58,7 +63,7 @@ out = F.scaled_dot_product_attention(
     k_rep,
     v_rep,
     attn_mask=self.gen_right_bottom_attn_mask(T, kv_len, x.device),
-    dropout_p=(self.dropout if self.training else 0.0),
+    dropout_p=(self.dropout_p if self.training else 0.0),
 )
 ```
 
