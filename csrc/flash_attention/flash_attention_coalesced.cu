@@ -30,19 +30,19 @@ __global__ void FlashAttentionCoalescedKernel(
         scalar_t k[kTileSize][kTileSize + 1];
         scalar_t v[kTileSize][kTileSize + 1];
     } sdata;
-    scalar_t hidden[kDimHead];
+    float hidden[kDimHead];
 
 #pragma unroll
     for (int c = 0; c < kDimHead; c++) {
-        hidden[c] = static_cast<scalar_t>(0);
+        hidden[c] = 0.0;
     }
 
     auto ly = threadIdx.x;
     auto gy_base = blockDim.x * blockIdx.x;
     auto gy = gy_base + ly;
 
-    scalar_t m_softmax = static_cast<scalar_t>(-INFINITY);
-    scalar_t sum_softmax = static_cast<scalar_t>(0);
+    float m_softmax = -INFINITY;
+    float sum_softmax = 0.0;
 
     for (int tile_idx = 0; kTileSize * tile_idx < dim_t;
          tile_idx++) {
@@ -108,7 +108,7 @@ __global__ void FlashAttentionCoalescedKernel(
         }
 
         // [STEP: FIND m_new]
-        auto sqrt_c = static_cast<scalar_t>(sqrt(dim_c));
+        auto sqrt_c = static_cast<float>(sqrt(dim_c));
         auto m_new = m_softmax;
 #pragma unroll
         for (int lx = 0; lx < kTileSize; lx++) {
@@ -209,7 +209,9 @@ __global__ void FlashAttentionCoalescedKernel(
 #pragma unroll
     for (int c = 0; c < kDimHead; c++) {
         if ((gy) < dim_t && (c) < dim_c) {
-            out[gy * dim_c + c] = hidden[c] / sum_softmax;
+            out[gy * dim_c + c] = static_cast<scalar_t>(
+                hidden[c] / sum_softmax
+            );
         }
     }
 
