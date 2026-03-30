@@ -191,12 +191,20 @@ class CoreEngine:
             raise RuntimeError(f"{scheduled=} {token_ids_next=}")
 
         for i, (seq, num_step_tokens) in enumerate(scheduled):
+            ##############################
+            ##### maintain seq
+            ##### - num_computed_tokens
+            ##### - append(token_id)
+            ##############################
             seq.num_computed_tokens += num_step_tokens
             if seq.is_prefilling:
                 continue
 
             token_id = token_ids_next[i]
             seq.append(token_id)
+            ##############################
+            ##### maintain seq
+            ##############################
 
             if token_id in seq.stop_token_ids_set:
                 self.scheduler.free_and_finish(seq, StopReason.EOS)

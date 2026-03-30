@@ -69,14 +69,19 @@ class Sequence:
     @property
     def is_decoding(self):
         """
-        It is possible that: num_computed_tokens == num_tokens + 1
-
-        since token_ids.append is called after maintaining num_computed_tokens
+        Indicates whether the sequence has finished processing its initial prompt.
+        True if all prompt tokens have been computed (entering the auto-regressive generation phase).
         """
-        return self.num_computed_tokens >= self.num_tokens
+
+        return self.num_computed_tokens >= self.prompt_length
 
     @property
     def is_prefilling(self):
+        """
+        Indicates whether the sequence is still processing its initial prompt.
+        True during the initial prefill or chunked prefill stages.
+        """
+
         return not self.is_decoding
 
     def append(self, token_id: int):
