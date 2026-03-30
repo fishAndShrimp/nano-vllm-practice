@@ -11,11 +11,23 @@ from femtovllm.engine.request_queue import RequestQueue
 from femtovllm.engine.scheduler import Scheduler
 from femtovllm.engine.sequence import Sequence
 from femtovllm.engine.step_budget import StepBudget
-from femtovllm.protocol import SamplingParams, StepDelta
+from femtovllm.protocol import SamplingParams, StepDelta, StopReason
 
 
 class CoreEngine:
     """ """
+
+    @classmethod
+    def calc_max_kv_len_non_split(cls) -> int:
+        """ """
+        major, minor = torch.cuda.get_device_capability()
+
+        # sizeof(float) * 1024 * 6 = 24KB
+        if major <= 7:
+            return 1024 * 6
+
+        # sizeof(float) * 1024 * 8 = 32KB
+        return femtovllm.ops.MAX_KV_LEN_NON_SPLIT
 
     def __init__(
         self,
@@ -103,6 +115,8 @@ class CoreEngine:
         )
 
         # [STEP: scheduler]
+        max_kv_len_non_split = self.calc_max_kv_len_non_split()
+
         self.scheduler = Scheduler(
             step_budget=StepBudget(
                 max_seqs=max_seqs,
@@ -111,6 +125,7 @@ class CoreEngine:
             ),
             request_queue=RequestQueue(),
             kv_cache_manager=kv_cache_manager,
+            max_kv_len_non_split=max_kv_len_non_split,
         )
 
         # [STEP: init model and move weights]
@@ -184,9 +199,9 @@ class CoreEngine:
             seq.append(token_id)
 
             if token_id in seq.stop_token_ids_set:
-                self.scheduler.free_and_finish(seq, "EOS")
+                self.scheduler.free_and_finish(seq, StopReason.EOS)
             elif seq.num_new_tokens >= seq.sampling_params.max_new_tokens:
-                self.scheduler.free_and_finish(seq, "LENGTH")
+                self.scheduler.free_and_finish(seq, StopReason.LENGTH)
 
             step_deltas.append(
                 StepDelta(

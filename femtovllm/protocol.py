@@ -1,6 +1,20 @@
 import dataclasses
+import enum
+from typing import Optional
 
 import torch
+
+
+class StopReason(str, enum.Enum):
+    """ """
+
+    # normal
+    EOS = "EOS"
+    LENGTH = "LENGTH"
+
+    # aborted
+    OOM = "OOM"
+    HARDWARE_LIMIT = "HARDWARE_LIMIT"
 
 
 @dataclasses.dataclass
@@ -22,7 +36,7 @@ class SamplingParams:
     def clone(self):
         return dataclasses.replace(
             self,
-            stop_token_ids=[x for x in self.stop_token_ids],
+            stop_token_ids=self.stop_token_ids.copy(),
         )
 
 
@@ -61,7 +75,7 @@ class StepDelta:
         req_id: str,
         seq_id: str,
         new_token_id: int,
-        stop_reason: str,
+        stop_reason: Optional[StopReason],
     ):
         self.req_id = req_id
         self.seq_id = seq_id

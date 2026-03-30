@@ -4,9 +4,16 @@ try:
     from femtovllm import _C as _cuda_backend
 except ImportError as e:
     raise ImportError(
-        "CUDA extension is not compiled. Please run `pip install .`"
+        "🚨 Failed to load femtovllm CUDA backend!\n"
+        "This project strictly requires compiled CUDA extensions.\n"
+        "Please ensure you have a GPU, NVCC installed, and run:\n"
+        "    pip install .\n"
+        "or\n"
+        "    python setup.py install"
     ) from e
 
+
+MAX_KV_LEN_NON_SPLIT = _cuda_backend.kMaxKVLenNonSplit
 
 TILE_SIZE = _cuda_backend.kTileSize
 # The CUDA backend strictly operates on fixed kDimHead lengths for register allocation.

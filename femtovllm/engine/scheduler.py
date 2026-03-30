@@ -2,6 +2,7 @@ from femtovllm.engine.kv_cache_manager import KVCacheManager
 from femtovllm.engine.request_queue import RequestQueue
 from femtovllm.engine.sequence import Sequence
 from femtovllm.engine.step_budget import StepBudget
+from femtovllm.protocol import StopReason
 
 
 class Scheduler:
@@ -12,10 +13,13 @@ class Scheduler:
         step_budget: StepBudget,
         request_queue: RequestQueue,
         kv_cache_manager: KVCacheManager,
+        max_kv_len_non_split: int,
     ):
         self.step_budget = step_budget
         self.request_queue = request_queue
         self.kv_cache_manager = kv_cache_manager
+
+        self.max_kv_len_non_split = max_kv_len_non_split
 
     def _preempt(self):
         """
@@ -38,7 +42,7 @@ class Scheduler:
     def free_and_finish(
         self,
         seq: Sequence,
-        stop_reason: str,
+        stop_reason: StopReason,
     ):
         """
         [Atomic]
@@ -54,6 +58,10 @@ class Scheduler:
             self.step_budget.remaining_tokens,
         )
 
+    def _calc_limit_hardware(self, seq: Sequence):
+        """ """
+        return self.max_kv_len_non_split - seq.num_tokens
+
     def _schedule_running(self):
         """ """
         scheduled: list[tuple[Sequence, int]] = []
@@ -66,6 +74,9 @@ class Scheduler:
                 has_resource = False
                 break
 
+            ##############################
+            ##### determine num_tokens
+            ##############################
             # [LIMIT: computation]
             # truncate to fit computation limit
             limit_computation = self._calc_limit_computation()
@@ -80,6 +91,18 @@ class Scheduler:
             if num_tokens <= 0:
                 raise RuntimeError(f"{seq=} strange {seq.num_uncomputed_tokens=}")
 
+            # [LIMIT: hardware]
+            # truncate to fit hardware limit
+            limit_hardware = self._calc_limit_hardware(seq)
+            if limit_hardware <= 0:
+                self.free_and_finish(seq, StopReason.HARDWARE_LIMIT)
+                continue
+
+            num_tokens = min(num_tokens, limit_hardware)
+
+            ##############################
+            ##### fulfill num_tokens
+            ##############################
             # [LIMIT: computation]
             # [budget]
             fit_budget = self.step_budget.can_consume(num_tokens)
@@ -100,7 +123,7 @@ class Scheduler:
                     if limit_kv_cache <= 0:
                         if self.request_queue.running_head_is(seq):
                             # this seq requires more than entire kv_cache
-                            self.free_and_finish(seq, "OOM")
+                            self.free_and_finish(seq, StopReason.OOM)
                             aborted.append(seq)
                         break
 
@@ -111,7 +134,9 @@ class Scheduler:
 
                 fit_kv_cache = self.kv_cache_manager.can_allocate(seq, num_tokens)
 
-            # [STEP: consume]
+            ##############################
+            ##### consume
+            ##############################
             if (
                 #####
                 seq.is_running() and (num_tokens > 0) and fit_budget and fit_kv_cache
@@ -131,6 +156,9 @@ class Scheduler:
             # [STEP: highest priority waiting]
             seq = self.request_queue.peek_waiting()
 
+            ##############################
+            ##### determine num_tokens
+            ##############################
             # [LIMIT: computation]
             # [LIMIT: storage]
             # truncate to fit both computation and storage limit
@@ -148,9 +176,29 @@ class Scheduler:
             if num_tokens <= 0:
                 raise RuntimeError(f"{seq=} strange {seq.num_uncomputed_tokens=}")
 
+            # [LIMIT: hardware]
+            # truncate to fit hardware limit
+            limit_hardware = self._calc_limit_hardware(seq)
+            if limit_hardware <= 0:
+                self.free_and_finish(seq, StopReason.HARDWARE_LIMIT)
+                continue
+
+            num_tokens = min(num_tokens, limit_hardware)
+
+            ##############################
+            ##### fulfill num_tokens
+            ##############################
+            # [LIMIT: computation]
+            # [budget]
             fit_budget = self.step_budget.can_consume(num_tokens)
+
+            # [LIMIT: storage]
+            # [kv_cache]
             fit_kv_cache = self.kv_cache_manager.can_allocate(seq, num_tokens)
-            # [STEP: consume]
+
+            ##############################
+            ##### consume
+            ##############################
             if (
                 #####
                 (num_tokens > 0) and fit_budget and fit_kv_cache

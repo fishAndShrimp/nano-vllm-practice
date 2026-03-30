@@ -54,6 +54,9 @@ torch::Tensor PagedAttentionGemvCuda(
 );
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.attr("kMaxKVLenNonSplit") =
+        femtovllm::kMaxKVLenNonSplit;
+
     m.attr("kTileSize") = femtovllm::kTileSize;
     m.attr("kDimHead") = femtovllm::kDimHead;
 

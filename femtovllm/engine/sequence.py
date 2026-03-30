@@ -1,7 +1,8 @@
 import enum
 import time
+from typing import Optional
 
-from femtovllm.protocol import SamplingParams
+from femtovllm.protocol import SamplingParams, StopReason
 
 
 class SequenceStatus(enum.Enum):
@@ -44,7 +45,7 @@ class Sequence:
         # [PART: RUNNING <=> WAITING by RequestQueue]
         # [PART: RUNNING => FINISHED by CoreEngine/Scheduler]
         self.status = SequenceStatus.WAITING
-        self.stop_reason = None
+        self.stop_reason: Optional[StopReason] = None
 
         ## must copy
         self.token_ids = [x for x in token_ids]
@@ -83,7 +84,7 @@ class Sequence:
 
     def finish(
         self,
-        stop_reason: str,
+        stop_reason: StopReason,
     ):
         self.status = SequenceStatus.FINISHED
         self.stop_reason = stop_reason
