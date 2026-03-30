@@ -44,6 +44,15 @@ torch::Tensor PagedAttentionGemmCuda(
     torch::Tensor positions
 );
 
+torch::Tensor PagedAttentionGemvCuda(
+    torch::Tensor q,
+    torch::Tensor k_pool,
+    torch::Tensor v_pool,
+    torch::Tensor kv_page_tables,
+    torch::Tensor kv_lens,
+    int max_kv_len
+);
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("kTileSize") = femtovllm::kTileSize;
     m.attr("kDimHead") = femtovllm::kDimHead;
@@ -69,6 +78,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def(
             "PagedAttentionGemmCuda",
             &PagedAttentionGemmCuda
+        )
+        .def(
+            "PagedAttentionGemvCuda",
+            &PagedAttentionGemvCuda
         )
         .def("VecAddRaw", &VecAddRaw);
 }

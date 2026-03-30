@@ -79,8 +79,7 @@ __global__ void PagedAttentionGemvKernel(
 
     // [STEP: q@k.T]
     // scores and weights
-    // TODO dyna allocate
-    __shared__ float sw[1024];
+    extern __shared__ float sw[];
 
     // each warp maintains its own m and sum for softmax
     float m_softmax_warp = -INFINITY;
@@ -244,7 +243,8 @@ torch::Tensor PagedAttentionGemvCuda(
     torch::Tensor k_pool,
     torch::Tensor v_pool,
     torch::Tensor kv_page_tables,
-    torch::Tensor kv_lens
+    torch::Tensor kv_lens,
+    int max_kv_len
 ) {
     TORCH_CHECK_EQ(q.is_cuda(), true);
     TORCH_CHECK_EQ(k_pool.is_cuda(), true);
@@ -286,6 +286,13 @@ torch::Tensor PagedAttentionGemvCuda(
     TORCH_CHECK_EQ(dim_h % n_kv_heads, 0);
     int n_rep = dim_h / n_kv_heads;
 
+    TORCH_CHECK_LE(
+        max_kv_len,
+        femtovllm::kMaxKVLenNonSplit
+    );
+    // the array for scores and weights must be float type
+    auto bytes_dynamic_smem = max_kv_len * sizeof(float);
+
     auto out = torch::empty_like(q);
 
     AT_DISPATCH_FLOATING_TYPES_AND2(
@@ -296,7 +303,8 @@ torch::Tensor PagedAttentionGemvCuda(
         ([&] {
             PagedAttentionGemvKernel<scalar_t>
                 <<<dim3(q_len_flatten, dim_h),
-                   dim3(kWarpSize, kWarpsPerBlock)>>>(
+                   dim3(kWarpSize, kWarpsPerBlock),
+                   bytes_dynamic_smem>>>(
                     q.data_ptr<scalar_t>(),
                     q_len_flatten,
                     out.data_ptr<scalar_t>(),

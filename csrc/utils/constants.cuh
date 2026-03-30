@@ -27,6 +27,8 @@ inline constexpr int kTileSize = 32;
 // layout).
 inline constexpr int kKVLenPerPage = kTileSize;
 
+inline constexpr int kMaxKVLenNonSplit = 8192;
+
 // ============================================================================
 // Global Constants
 // ============================================================================

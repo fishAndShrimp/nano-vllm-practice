@@ -46,6 +46,7 @@ _block_tables = block_tables
 block_tables = torch.tensor(block_tables, dtype=torch.int32, device="cuda")
 
 
+max_kv_len = max(kv_lens)
 _kv_lens = kv_lens
 kv_lens = torch.tensor(kv_lens, dtype=torch.int32, device="cuda")
 
@@ -54,7 +55,7 @@ kv_lens = torch.tensor(kv_lens, dtype=torch.int32, device="cuda")
 ##### test
 ##########
 paged_attn = femtovllm._C.PagedAttentionGemvCuda(
-    q, k_pool, v_pool, block_tables, kv_lens
+    q, k_pool, v_pool, block_tables, kv_lens, max_kv_len
 )
 print(paged_attn)
 print(paged_attn.shape)
