@@ -167,15 +167,18 @@ class ModelRunner:
         raw_kv_lens = []
 
         max_q_len = -1
+        max_kv_len = -1
         for seq_const, num_tokens in scheduled_const:
-            i_pos = seq_const.num_computed_tokens
+            pos = seq_const.num_computed_tokens
+            kv_len = pos + num_tokens
 
-            flatten.extend(seq_const.token_ids[i_pos : i_pos + num_tokens])
-            raw_positions.extend(range(i_pos, i_pos + num_tokens))
+            flatten.extend(seq_const.token_ids[pos:kv_len])
+            raw_positions.extend(range(pos, kv_len))
             raw_cu_seqlens.append(raw_cu_seqlens[-1] + num_tokens)
-            raw_kv_lens.append(i_pos + num_tokens)
+            raw_kv_lens.append(kv_len)
 
             max_q_len = max(max_q_len, num_tokens)
+            max_kv_len = max(max_kv_len, kv_len)
 
         flatten = torch.tensor(
             flatten,
@@ -210,8 +213,10 @@ class ModelRunner:
                 k_cache_pools=k_cache_pools,
                 v_cache_pools=v_cache_pools,
                 kv_lens=kv_lens,
+                max_kv_len=max_kv_len,
                 block_tables=self.pad_block_tables(raw_block_tables),
                 raw_block_tables=raw_block_tables,
+                is_decoding=False,
             ),
             skip_lm_head=True,
         )
@@ -225,15 +230,59 @@ class ModelRunner:
         v_cache_pools: list[torch.Tensor],
         raw_block_tables: list[list[int]],
     ):
-        """
-        TODO
-        """
+        """ """
         if not scheduled_const:
             raise RuntimeError("Empty input")
 
-        return self._route_prefill(
-            scheduled_const,
-            k_cache_pools,
-            v_cache_pools,
-            raw_block_tables,
+        flatten = []
+        raw_positions = []
+        raw_kv_lens = []
+
+        max_kv_len = -1
+        for seq_const, _ in scheduled_const:
+            pos = seq_const.num_computed_tokens
+            kv_len = pos + 1
+
+            flatten.append(seq_const.token_ids[pos])
+            raw_positions.append(pos)
+            raw_kv_lens.append(kv_len)
+
+            max_kv_len = max(max_kv_len, kv_len)
+
+        flatten = torch.tensor(
+            flatten,
+            dtype=torch.long,
+            device=self.device,
         )
+        positions = torch.tensor(
+            raw_positions,
+            dtype=torch.int32,
+            device=self.device,
+        )
+        kv_lens = torch.tensor(
+            raw_kv_lens,
+            dtype=torch.int32,
+            device=self.device,
+        )
+
+        # (B, C)
+        hidden = self.model.forward_varlen(
+            idx_flatten=flatten,
+            varlen_attn_metadata=VarlenAttnMetadata(
+                positions=positions,
+                raw_positions=raw_positions,
+                cu_seqlens=None,
+                raw_cu_seqlens=None,
+                max_q_len=1,
+                k_cache_pools=k_cache_pools,
+                v_cache_pools=v_cache_pools,
+                kv_lens=kv_lens,
+                max_kv_len=max_kv_len,
+                block_tables=self.pad_block_tables(raw_block_tables),
+                raw_block_tables=raw_block_tables,
+                is_decoding=True,
+            ),
+            skip_lm_head=True,
+        )
+
+        return hidden

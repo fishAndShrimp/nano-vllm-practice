@@ -52,9 +52,12 @@ class VarlenAttnMetadata:
     k_cache_pools: list[torch.Tensor]
     v_cache_pools: list[torch.Tensor]
     kv_lens: torch.Tensor
+    max_kv_len: int
 
     block_tables: torch.Tensor
     raw_block_tables: list[list[int]]
+
+    is_decoding: bool
 
 
 class StepDelta:

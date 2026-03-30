@@ -197,6 +197,110 @@ class QwenSelfAttention(nn.Module):
         mask = q_pos[:, None] >= kv_pos[None, :]
         return mask
 
+    def forward_varlen_custom_gemv(
+        self,
+        x: torch.Tensor,
+        k_cache_pool: torch.Tensor,
+        v_cache_pool: torch.Tensor,
+        varlen_attn_metadata: VarlenAttnMetadata,
+    ):
+        """ """
+        B = len(varlen_attn_metadata.block_tables)
+        q_len_flatten, C = x.shape
+
+        n_heads = self.n_heads
+        n_kv_heads = self.n_kv_heads
+        d_head = self.d_head
+
+        # (q_len_flatten, H, D)
+        # no longer transpose
+        # ========================================================================
+        # [CRITICAL: Optimal Memory Dataflow for Varlen Attention]
+        # To eliminate memory movement overhead, we strictly defer any transpose
+        # operations until the final caching stage. The elegant dataflow is:
+        #
+        # 1. Projection: Linear layer outputs contiguous (q_len_flatten, H * D).
+        # 2. Reshape: Zero-copy `.view()` into (q_len_flatten, H, D).
+        # 3. RoPE: Applied in-place on (q_len_flatten, H, D) without moving memory.
+        # 4. Caching (Final Destination): We only transpose at the exact moment of
+        #    writing into the Paged KV Cache `[num_blocks, n_kv_heads, block_size, d_head]`.
+        #    This allows PyTorch's underlying `copy_()` to fuse the memory rearrangement
+        #    into a single step, avoiding expensive `.contiguous()` allocations.
+        # ========================================================================
+        q = self.w_q(x).view(q_len_flatten, n_heads, d_head)
+        k = self.w_k(x).view(q_len_flatten, n_kv_heads, d_head)
+        v = self.w_v(x).view(q_len_flatten, n_kv_heads, d_head)
+
+        q = self.q_norm(q)
+        k = self.k_norm(k)
+
+        q = self.rotary_embd(q, varlen_attn_metadata.positions)
+        k = self.rotary_embd(k, varlen_attn_metadata.positions)
+
+        for batch in range(B):
+            q_begin = varlen_attn_metadata.raw_cu_seqlens[batch]
+            q_end = varlen_attn_metadata.raw_cu_seqlens[batch + 1]
+
+            raw_block_table = varlen_attn_metadata.raw_block_tables[batch]
+            _, _, block_size, _ = k_cache_pool.shape
+
+            remaining_cache = varlen_attn_metadata.raw_positions[q_begin]
+            num_blocks_skip = remaining_cache // block_size
+            remaining_cache %= block_size
+
+            q_curr = q_begin
+            for block_index in raw_block_table[num_blocks_skip:]:
+                if block_index < 0:
+                    break
+                if q_curr >= q_end:
+                    break
+
+                # current block must have empty slots
+                # start to cache more
+                num_new_tokens = min(
+                    # empty slots in current block
+                    block_size - remaining_cache,
+                    # remaining new kv
+                    q_end - q_curr,
+                )
+
+                # (seqlen, n_kv_heads, D)
+                # transpose
+                # (n_kv_heads, seqlen, D)
+                k_cache_pool[
+                    block_index,
+                    :,
+                    remaining_cache : remaining_cache + num_new_tokens,
+                ] = k[q_curr : q_curr + num_new_tokens].transpose(0, 1)
+                v_cache_pool[
+                    block_index,
+                    :,
+                    remaining_cache : remaining_cache + num_new_tokens,
+                ] = v[q_curr : q_curr + num_new_tokens].transpose(0, 1)
+
+                remaining_cache += num_new_tokens
+                q_curr += num_new_tokens
+
+                remaining_cache -= block_size
+
+        # (H, q_len_flatten, D)
+        attn = femtovllm.ops.paged_attention_gemm(
+            # (q_len_flatten, H, D)
+            # (H, q_len_flatten, D)
+            q=q.transpose(0, 1),
+            k_pool=k_cache_pool,
+            v_pool=v_cache_pool,
+            cu_seqlens=varlen_attn_metadata.cu_seqlens,
+            max_q_len=varlen_attn_metadata.max_q_len,
+            kv_page_tables=varlen_attn_metadata.block_tables,
+            kv_lens=varlen_attn_metadata.kv_lens,
+            positions=varlen_attn_metadata.positions,
+        )
+        # (q_len_flatten, C)
+        attn = attn.transpose(0, 1).contiguous().view(q_len_flatten, n_heads * d_head)
+
+        return self.o_proj(attn), None
+
     def forward_varlen_custom_gemm(
         self,
         x: torch.Tensor,
@@ -471,6 +575,22 @@ class QwenSelfAttention(nn.Module):
     ]:
         """ """
         if varlen_attn_metadata is not None:
+            if self.varlen_attn_impl == "custom_gemm_gemv":
+                if varlen_attn_metadata.is_decoding:
+                    return self.forward_varlen_custom_gemv(
+                        x=x,
+                        k_cache_pool=k_cache_pool,
+                        v_cache_pool=v_cache_pool,
+                        varlen_attn_metadata=varlen_attn_metadata,
+                    )
+                else:
+                    return self.forward_varlen_custom_gemm(
+                        x=x,
+                        k_cache_pool=k_cache_pool,
+                        v_cache_pool=v_cache_pool,
+                        varlen_attn_metadata=varlen_attn_metadata,
+                    )
+
             if self.varlen_attn_impl == "custom_gemm":
                 return self.forward_varlen_custom_gemm(
                     x=x,
@@ -813,7 +933,7 @@ class QwenForCausalLM(nn.Module):
         )
 
         # (B, C)
-        if varlen_attn_metadata.cu_seqlens is None:
+        if varlen_attn_metadata.is_decoding:
             # Fast Path for Decode Phase:
             # Every sequence has length 1. Zero-overhead tensor reuse.
             hidden_next = hidden
