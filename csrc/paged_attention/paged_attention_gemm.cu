@@ -296,6 +296,8 @@ torch::Tensor PagedAttentionGemmCuda(
     TORCH_CHECK_EQ(q.dim(), 3);
     TORCH_CHECK_EQ(k_pool.dim(), 4);
     TORCH_CHECK_EQ(v_pool.dim(), 4);
+    TORCH_CHECK_EQ(q.size(-1), k_pool.size(-1));
+    TORCH_CHECK_EQ(q.size(-1), v_pool.size(-1));
     // (num_blocks, n_kv_heads, block_size, d_head)
     for (int i = 0; i < 4; i++) {
         TORCH_CHECK_EQ(k_pool.size(i), v_pool.size(i));
