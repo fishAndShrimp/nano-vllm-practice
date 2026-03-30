@@ -27,7 +27,7 @@ cu_seqlens = [
     8,
     24,
 ]
-q_len_max = max(
+max_q_len = max(
     #####
     (y - x)
     for x, y in zip(cu_seqlens[:-1], cu_seqlens[1:])
@@ -91,7 +91,7 @@ def gen_right_bottom_mask(q_len, kv_len):
 
 
 paged_attn = femtovllm._C.PagedAttentionGemmCuda(
-    q, k_pool, v_pool, cu_seqlens, q_len_max, block_tables, kv_lens, positions
+    q, k_pool, v_pool, cu_seqlens, max_q_len, block_tables, kv_lens, positions
 )
 print(paged_attn)
 print(paged_attn.shape)

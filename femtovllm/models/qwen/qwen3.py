@@ -291,7 +291,7 @@ class QwenSelfAttention(nn.Module):
             k_pool=k_cache_pool,
             v_pool=v_cache_pool,
             cu_seqlens=varlen_attn_metadata.cu_seqlens,
-            q_len_max=varlen_attn_metadata.q_len_max,
+            max_q_len=varlen_attn_metadata.max_q_len,
             kv_page_tables=varlen_attn_metadata.block_tables,
             kv_lens=varlen_attn_metadata.kv_lens,
             positions=varlen_attn_metadata.positions,
@@ -857,7 +857,7 @@ class QwenForCausalLM(nn.Module):
         raw_cu_seqlens = varlen_attn_metadata.raw_cu_seqlens
 
         B = len(varlen_attn_metadata.raw_cu_seqlens) - 1
-        T = varlen_attn_metadata.q_len_max
+        T = varlen_attn_metadata.max_q_len
 
         idx_batch = []
         idx_flatten_cpu = idx_flatten.tolist()  # EXPENSIVE

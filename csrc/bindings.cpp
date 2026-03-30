@@ -38,7 +38,7 @@ torch::Tensor PagedAttentionGemmCuda(
     torch::Tensor k_pool,
     torch::Tensor v_pool,
     torch::Tensor cu_seqlens,
-    int q_len_max,
+    int max_q_len,
     torch::Tensor kv_page_tables,
     torch::Tensor kv_lens,
     torch::Tensor positions

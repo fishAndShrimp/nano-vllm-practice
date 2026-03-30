@@ -269,7 +269,7 @@ torch::Tensor PagedAttentionGemmCuda(
     torch::Tensor k_pool,
     torch::Tensor v_pool,
     torch::Tensor cu_seqlens,
-    int q_len_max,
+    int max_q_len,
     torch::Tensor kv_page_tables,
     torch::Tensor kv_lens,
     torch::Tensor positions
@@ -328,7 +328,7 @@ torch::Tensor PagedAttentionGemmCuda(
         ([&] {
             PagedAttentionGemmKernel<scalar_t><<<
                 dim3(
-                    (q_len_max + kTileSize - 1) / kTileSize,
+                    (max_q_len + kTileSize - 1) / kTileSize,
                     num_seqs,
                     dim_h
                 ),

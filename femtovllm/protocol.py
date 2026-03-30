@@ -47,7 +47,7 @@ class VarlenAttnMetadata:
 
     cu_seqlens: torch.Tensor
     raw_cu_seqlens: list[int]
-    q_len_max: int
+    max_q_len: int
 
     k_cache_pools: list[torch.Tensor]
     v_cache_pools: list[torch.Tensor]
