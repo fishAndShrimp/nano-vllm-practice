@@ -776,29 +776,60 @@ class QwenForCausalLM(nn.Module):
         # (q_len_flatten,)
         idx_flatten: torch.Tensor,
         varlen_attn_metadata: VarlenAttnMetadata,
+        skip_lm_head: bool = False,
     ):
         """
-        - input.shape: (q_len_flatten,)
-        - output.shape: (B, vocab_size)
-        - B: len(cu_seqlens) - 1
+        Forward pass for variable-length (flattened) sequences.
+        Extracts only the final token of each sequence for next-token prediction.
+
+        Args:
+            idx_flatten: Flattened input token IDs. Shape: (q_len_flatten,)
+            varlen_attn_metadata: Metadata for variable-length attention.
+                If `cu_seqlens` is None, it indicates a pure decode phase (all seq_lens = 1).
+            skip_lm_head: If True, skips the LM head projection and returns hidden states.
+
+        Returns:
+            torch.Tensor: The extracted features for the next token.
+            - Default shape: (B, vocab_size)
+            - If skip_lm_head=True: (B, C)
+
+        Note:
+            B = Number of sequences in the batch.
+            To maximize memory efficiency, the tensor shape collapses from
+            (q_len_flatten, C) to (B, C) before entering the LM head.
         """
+
         if femtovllm._DEV.fake_varlen_by_batch:
             return self._forward_varlen_fake(
                 idx_flatten=idx_flatten,
                 varlen_attn_metadata=varlen_attn_metadata,
+                skip_lm_head=skip_lm_head,
             )
 
+        # (q_len_flatten, C)
         hidden, _ = self.model(
             idx=idx_flatten,
             varlen_attn_metadata=varlen_attn_metadata,
         )
 
-        hidden_next = hidden[
-            #####
-            varlen_attn_metadata.cu_seqlens[1:] - 1
-        ]
-        logits_next: torch.Tensor = self.lm_head(hidden_next)
+        # (B, C)
+        if varlen_attn_metadata.cu_seqlens is None:
+            # Fast Path for Decode Phase:
+            # Every sequence has length 1. Zero-overhead tensor reuse.
+            hidden_next = hidden
+        else:
+            # Prefill Phase:
+            # Gather the last token of each sequence using cu_seqlens.
+            hidden_next = hidden[
+                #####
+                varlen_attn_metadata.cu_seqlens[1:] - 1
+            ]
 
+        if skip_lm_head:
+            return hidden_next
+
+        # (B, vocab_size)
+        logits_next: torch.Tensor = self.lm_head(hidden_next)
         return logits_next
 
     def _forward_varlen_fake(
@@ -806,6 +837,7 @@ class QwenForCausalLM(nn.Module):
         # (q_len_flatten,)
         idx_flatten: torch.Tensor,
         varlen_attn_metadata: VarlenAttnMetadata,
+        skip_lm_head: bool = False,
     ):
         """
         WARNING: Temporary workaround to fast verify engine logic.
@@ -857,6 +889,9 @@ class QwenForCausalLM(nn.Module):
             #####
             varlen_attn_metadata.cu_seqlens[1:] - 1
         ]
+        if skip_lm_head:
+            return x_next
+
         # (B, vocab_size)
         logits_next: torch.Tensor = self.lm_head(x_next)
         return logits_next
