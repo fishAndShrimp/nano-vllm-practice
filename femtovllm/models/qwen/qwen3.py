@@ -24,7 +24,7 @@ class QwenRotaryEmbedding(nn.Module):
         max_seqlen: int,
         d_head: int,
         base: float = 1000000.0,
-        device: str = None,
+        device: Optional[str | torch.device] = None,
     ):
         super().__init__()
 

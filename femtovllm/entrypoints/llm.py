@@ -23,7 +23,7 @@ class LLM:
         hf_config: Qwen3Config,
         weights_dir: str | Path,
         dtype: Optional[str | torch.dtype] = None,
-        device: Optional[str] = None,
+        device: Optional[str | torch.device] = None,
     ):
         """ """
         self.input_builder = InputBuilder(weights_dir)

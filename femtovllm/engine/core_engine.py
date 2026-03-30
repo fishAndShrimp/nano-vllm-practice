@@ -39,7 +39,7 @@ class CoreEngine:
         hf_config: Qwen3Config,
         weights_dir: Path,
         dtype: Optional[torch.dtype] = None,
-        device: Optional[str] = None,
+        device: Optional[str | torch.device] = None,
     ):
         """ """
         ##########
@@ -98,7 +98,7 @@ class CoreEngine:
         device = "cuda" if (device is None) else device
 
         # invalid type
-        if not isinstance(device, str):
+        if not isinstance(device, (str, torch.device)):
             raise TypeError(f"{type(device)=}")
 
         self.device = device
@@ -132,7 +132,6 @@ class CoreEngine:
         self.model_runner = ModelRunner(
             hf_config=hf_config,
             weights_dir=weights_dir,
-            kv_cache_manager=kv_cache_manager,
             dtype=dtype,
             device=device,
         )
