@@ -38,9 +38,9 @@ raw_block_tables = [
 ]
 max_blocks = max(len(x) for x in raw_block_tables)
 block_tables = []
-for i_raw_tables in raw_block_tables:
+for raw_table in raw_block_tables:
     block_tables.append(
-        i_raw_tables + [-1] * (max_blocks - len(i_raw_tables)),
+        raw_table + [-1] * (max_blocks - len(raw_table)),
     )
 _block_tables = block_tables
 block_tables = torch.tensor(block_tables, dtype=torch.int32, device="cuda")

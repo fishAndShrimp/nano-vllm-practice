@@ -51,9 +51,9 @@ femtovllm._DEV.varlen_attn_impl = "pytorch"
 llm = LLM(
     max_seqs=10,
     max_tokens=1000,
-    max_tokens_per_seq=100,
+    max_tokens_per_seq=10,
     num_blocks=200,
-    block_size=64,
+    block_size=32,
     hf_config=Qwen3Config.from_pretrained(weights_dir),
     weights_dir=weights_dir,
     dtype=torch.bfloat16,
@@ -66,7 +66,7 @@ stream_generator, req_ids = llm.generate(
     sampling_params=SamplingParams(
         temperature=0.5,
         presence_penalty=1,
-        max_new_tokens=1000,
+        max_new_tokens=2,
     ),
 )
 
