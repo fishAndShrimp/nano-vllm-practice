@@ -11,7 +11,7 @@ from transformers import Qwen3Config
 
 import femtovllm
 import femtovllm.ops
-from femtovllm.protocol import VarlenAttnMetadata
+from femtovllm.protocol import AttentionBackend, VarlenAttnMetadata
 
 
 class QwenRotaryEmbedding(nn.Module):
@@ -237,64 +237,42 @@ class QwenSelfAttention(nn.Module):
         q = self.rotary_embd(q, varlen_attn_metadata.positions)
         k = self.rotary_embd(k, varlen_attn_metadata.positions)
 
+        # TODO use kernel
         for batch in range(B):
-            q_begin = varlen_attn_metadata.raw_cu_seqlens[batch]
-            q_end = varlen_attn_metadata.raw_cu_seqlens[batch + 1]
-
             raw_block_table = varlen_attn_metadata.raw_block_tables[batch]
+
             _, _, block_size, _ = k_cache_pool.shape
 
-            remaining_cache = varlen_attn_metadata.raw_positions[q_begin]
+            remaining_cache = varlen_attn_metadata.raw_positions[batch]
             num_blocks_skip = remaining_cache // block_size
             remaining_cache %= block_size
 
-            q_curr = q_begin
-            for block_index in raw_block_table[num_blocks_skip:]:
-                if block_index < 0:
-                    break
-                if q_curr >= q_end:
-                    break
+            block_index = raw_block_table[num_blocks_skip]
 
-                # current block must have empty slots
-                # start to cache more
-                num_new_tokens = min(
-                    # empty slots in current block
-                    block_size - remaining_cache,
-                    # remaining new kv
-                    q_end - q_curr,
-                )
-
-                # (seqlen, n_kv_heads, D)
-                # transpose
-                # (n_kv_heads, seqlen, D)
-                k_cache_pool[
-                    block_index,
-                    :,
-                    remaining_cache : remaining_cache + num_new_tokens,
-                ] = k[q_curr : q_curr + num_new_tokens].transpose(0, 1)
-                v_cache_pool[
-                    block_index,
-                    :,
-                    remaining_cache : remaining_cache + num_new_tokens,
-                ] = v[q_curr : q_curr + num_new_tokens].transpose(0, 1)
-
-                remaining_cache += num_new_tokens
-                q_curr += num_new_tokens
-
-                remaining_cache -= block_size
+            # (seqlen, n_kv_heads, D)
+            # transpose
+            # (n_kv_heads, seqlen, D)
+            k_cache_pool[
+                block_index,
+                :,
+                remaining_cache : remaining_cache + 1,
+            ] = k[batch : batch + 1].transpose(0, 1)
+            v_cache_pool[
+                block_index,
+                :,
+                remaining_cache : remaining_cache + 1,
+            ] = v[batch : batch + 1].transpose(0, 1)
 
         # (H, q_len_flatten, D)
-        attn = femtovllm.ops.paged_attention_gemm(
+        attn = femtovllm.ops.paged_attention_gemv(
             # (q_len_flatten, H, D)
             # (H, q_len_flatten, D)
             q=q.transpose(0, 1),
             k_pool=k_cache_pool,
             v_pool=v_cache_pool,
-            cu_seqlens=varlen_attn_metadata.cu_seqlens,
-            max_q_len=varlen_attn_metadata.max_q_len,
             kv_page_tables=varlen_attn_metadata.block_tables,
             kv_lens=varlen_attn_metadata.kv_lens,
-            positions=varlen_attn_metadata.positions,
+            max_kv_len=varlen_attn_metadata.max_kv_len,
         )
         # (q_len_flatten, C)
         attn = attn.transpose(0, 1).contiguous().view(q_len_flatten, n_heads * d_head)
@@ -575,7 +553,7 @@ class QwenSelfAttention(nn.Module):
     ]:
         """ """
         if varlen_attn_metadata is not None:
-            if self.varlen_attn_impl == "custom_gemm_gemv":
+            if self.varlen_attn_impl == AttentionBackend.CUSTOM_GEMM_GEMV:
                 if varlen_attn_metadata.is_decoding:
                     return self.forward_varlen_custom_gemv(
                         x=x,
@@ -591,7 +569,7 @@ class QwenSelfAttention(nn.Module):
                         varlen_attn_metadata=varlen_attn_metadata,
                     )
 
-            if self.varlen_attn_impl == "custom_gemm":
+            if self.varlen_attn_impl == AttentionBackend.CUSTOM_GEMM:
                 return self.forward_varlen_custom_gemm(
                     x=x,
                     k_cache_pool=k_cache_pool,
@@ -599,7 +577,7 @@ class QwenSelfAttention(nn.Module):
                     varlen_attn_metadata=varlen_attn_metadata,
                 )
 
-            if self.varlen_attn_impl == "pytorch":
+            if self.varlen_attn_impl == AttentionBackend.PYTORCH:
                 return self.forward_varlen_pytorch(
                     x=x,
                     k_cache_pool=k_cache_pool,

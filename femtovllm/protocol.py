@@ -17,6 +17,14 @@ class StopReason(str, enum.Enum):
     HARDWARE_LIMIT = "HARDWARE_LIMIT"
 
 
+class AttentionBackend(str, enum.Enum):
+    """ """
+
+    PYTORCH = "pytorch"
+    CUSTOM_GEMM = "custom_gemm"
+    CUSTOM_GEMM_GEMV = "custom_gemm_gemv"
+
+
 @dataclasses.dataclass
 class SamplingParams:
     """

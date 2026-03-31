@@ -3,6 +3,7 @@ from pathlib import Path
 import torch
 from transformers import Qwen3Config
 
+import femtovllm
 from femtovllm.engine.sampler import Sampler
 from femtovllm.engine.sequence import Sequence
 from femtovllm.models import QwenForCausalLM
@@ -93,19 +94,24 @@ class ModelRunner:
         decode_indices = []
         decode_tables = []
 
-        for i, (seq_bundle, block_table) in enumerate(
-            zip(scheduled_const, raw_block_tables),
-        ):
-            seq, _ = seq_bundle
+        if femtovllm._DEV.route_prefill_decode:
+            for i, (seq_bundle, block_table) in enumerate(
+                zip(scheduled_const, raw_block_tables),
+            ):
+                seq, _ = seq_bundle
 
-            if seq.is_prefilling:
-                prefill_scheduled.append(seq_bundle)
-                prefill_indices.append(i)
-                prefill_tables.append(block_table)
-            else:
-                decode_scheduled.append(seq_bundle)
-                decode_indices.append(i)
-                decode_tables.append(block_table)
+                if seq.is_prefilling:
+                    prefill_scheduled.append(seq_bundle)
+                    prefill_indices.append(i)
+                    prefill_tables.append(block_table)
+                else:
+                    decode_scheduled.append(seq_bundle)
+                    decode_indices.append(i)
+                    decode_tables.append(block_table)
+        else:
+            prefill_scheduled = scheduled_const
+            prefill_indices = range(len(scheduled_const))
+            prefill_tables = raw_block_tables
 
         ##########
         ##### calc routed hidden

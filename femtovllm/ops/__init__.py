@@ -74,6 +74,32 @@ def vec_add(
         raise NotImplementedError(f"Unknown backend implementation: {impl}")
 
 
+def paged_attention_gemv(
+    q: torch.Tensor,
+    k_pool: torch.Tensor,
+    v_pool: torch.Tensor,
+    kv_page_tables: torch.Tensor,
+    kv_lens: torch.Tensor,
+    max_kv_len: int,
+    #####
+    impl: str = "cuda",
+):
+    """ """
+    q = _ensure_valid_tensor(q, "q")
+
+    if impl == "cuda":
+        return _cuda_backend.PagedAttentionGemvCuda(
+            q,
+            k_pool,
+            v_pool,
+            kv_page_tables,
+            kv_lens,
+            max_kv_len,
+        )
+    else:
+        raise NotImplementedError()
+
+
 def paged_attention_gemm(
     q: torch.Tensor,
     k_pool: torch.Tensor,
