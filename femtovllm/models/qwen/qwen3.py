@@ -156,7 +156,7 @@ class QwenSelfAttention(nn.Module):
         config: Qwen3Config = None,
     ):
         super().__init__()
-        self.varlen_attn_impl = femtovllm._DEV.varlen_attn_impl
+        self.varlen_attn_backend = femtovllm._DEV.varlen_attn_backend
 
         if d_model % n_heads != 0:
             raise ValueError(f"{(d_model % n_heads)=}")
@@ -553,7 +553,7 @@ class QwenSelfAttention(nn.Module):
     ]:
         """ """
         if varlen_attn_metadata is not None:
-            if self.varlen_attn_impl == AttentionBackend.CUSTOM_GEMM_GEMV:
+            if self.varlen_attn_backend == AttentionBackend.CUSTOM_GEMM_GEMV:
                 if varlen_attn_metadata.is_decoding:
                     return self.forward_varlen_custom_gemv(
                         x=x,
@@ -569,7 +569,7 @@ class QwenSelfAttention(nn.Module):
                         varlen_attn_metadata=varlen_attn_metadata,
                     )
 
-            if self.varlen_attn_impl == AttentionBackend.CUSTOM_GEMM:
+            if self.varlen_attn_backend == AttentionBackend.CUSTOM_GEMM:
                 return self.forward_varlen_custom_gemm(
                     x=x,
                     k_cache_pool=k_cache_pool,
@@ -577,7 +577,7 @@ class QwenSelfAttention(nn.Module):
                     varlen_attn_metadata=varlen_attn_metadata,
                 )
 
-            if self.varlen_attn_impl == AttentionBackend.PYTORCH:
+            if self.varlen_attn_backend == AttentionBackend.PYTORCH:
                 return self.forward_varlen_pytorch(
                     x=x,
                     k_cache_pool=k_cache_pool,
@@ -585,7 +585,7 @@ class QwenSelfAttention(nn.Module):
                     varlen_attn_metadata=varlen_attn_metadata,
                 )
 
-            raise NotImplementedError(f"{self.varlen_attn_impl=}")
+            raise NotImplementedError(f"{self.varlen_attn_backend=}")
 
         B, T, C = x.shape
         n_heads = self.n_heads

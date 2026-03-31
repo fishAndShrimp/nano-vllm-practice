@@ -29,7 +29,7 @@ weights_dir = (
 )
 
 
-femtovllm._DEV.varlen_attn_impl = "pytorch"
+femtovllm._DEV.varlen_attn_backend = "pytorch"
 llm = LLM(
     max_seqs=10,
     max_tokens=1000,

@@ -47,7 +47,13 @@ weights_dir = (
 )
 
 
-femtovllm._DEV.varlen_attn_impl = "custom_gemm"
+femtovllm._DEV.varlen_attn_backend = femtovllm.AttentionBackend(
+    (
+        "pytorch",
+        "custom_gemm",
+        "custom_gemm_gemv",
+    )[2]
+)
 llm = LLM(
     max_seqs=10,
     max_tokens=1000,
@@ -64,7 +70,7 @@ llm = LLM(
 stream_generator, req_ids = llm.generate(
     prompts,
     sampling_params=SamplingParams(
-        temperature=0.5,
+        temperature=0.8,
         presence_penalty=1,
         max_new_tokens=1000,
     ),
