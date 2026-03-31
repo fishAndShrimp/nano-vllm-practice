@@ -11,7 +11,7 @@ from femtovllm.engine.request_queue import RequestQueue
 from femtovllm.engine.scheduler import Scheduler
 from femtovllm.engine.sequence import Sequence
 from femtovllm.engine.step_budget import StepBudget
-from femtovllm.protocol import SamplingParams, StepDelta, StopReason
+from femtovllm.protocol import ReqId, SamplingParams, StepDelta, StopReason
 
 
 class CoreEngine:
@@ -237,7 +237,7 @@ class CoreEngine:
 
     def add_request(
         self,
-        req_id: str,
+        req_id: ReqId,
         token_ids: list[int],
         sampling_params: SamplingParams,
     ):

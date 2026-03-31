@@ -1,6 +1,6 @@
 import dataclasses
 import enum
-from typing import Optional
+from typing import Optional, TypeAlias
 
 import torch
 
@@ -68,6 +68,10 @@ class VarlenAttnMetadata:
     is_decoding: bool
 
 
+ReqId: TypeAlias = int | str
+SeqId: TypeAlias = int | str
+
+
 class StepDelta:
     """
     streaming out shared by entrypoints and engine
@@ -83,8 +87,8 @@ class StepDelta:
 
     def __init__(
         self,
-        req_id: str,
-        seq_id: str,
+        req_id: ReqId,
+        seq_id: SeqId,
         new_token_id: int,
         stop_reason: Optional[StopReason],
     ):

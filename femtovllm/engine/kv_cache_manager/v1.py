@@ -1,5 +1,6 @@
 from femtovllm.engine.kv_cache_manager.block_allocator import BlockAllocator
 from femtovllm.engine.sequence import Sequence
+from femtovllm.protocol import SeqId
 
 
 class KVCacheManager:
@@ -18,7 +19,7 @@ class KVCacheManager:
             block_size=block_size,
         )
 
-        self.block_tables: dict[int | str, list[int]] = {}
+        self.block_tables: dict[SeqId, list[int]] = {}
 
     def _calc_needed_blocks(
         self,

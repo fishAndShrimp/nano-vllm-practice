@@ -2,7 +2,7 @@ import enum
 import time
 from typing import Optional
 
-from femtovllm.protocol import SamplingParams, StopReason
+from femtovllm.protocol import ReqId, SamplingParams, SeqId, StopReason
 
 
 class SequenceStatus(enum.Enum):
@@ -19,13 +19,12 @@ class Sequence:
 
     - seq_id: seq id
     - token_ids: `idx` row
-    - block_table: block indices
     """
 
     def __init__(
         self,
-        req_id: int | str,
-        seq_id: int | str,
+        req_id: ReqId,
+        seq_id: SeqId,
         token_ids: list[int],
         sampling_params: SamplingParams,
     ):
