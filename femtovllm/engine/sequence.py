@@ -96,6 +96,9 @@ class Sequence:
     def is_running(self):
         return self.status == SequenceStatus.RUNNING
 
+    def is_waiting(self):
+        return self.status == SequenceStatus.WAITING
+
     def __repr__(self) -> str:
         """
         Dynamic repr for debugging. Truncates massive lists and resolves Enums.

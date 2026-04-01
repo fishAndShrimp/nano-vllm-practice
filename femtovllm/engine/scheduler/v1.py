@@ -155,6 +155,10 @@ class Scheduler:
         while self.request_queue.size_waiting > 0:
             # [STEP: highest priority waiting]
             seq = self.request_queue.peek_waiting()
+            # [STEP: highest has been aborted]
+            if not seq.is_waiting():
+                self.request_queue.pop_waiting()
+                continue
 
             ##############################
             ##### determine num_tokens
@@ -201,7 +205,7 @@ class Scheduler:
             ##############################
             if (
                 #####
-                (num_tokens > 0) and fit_budget and fit_kv_cache
+                seq.is_waiting() and (num_tokens > 0) and fit_budget and fit_kv_cache
             ):
                 seq = self.request_queue.pop_waiting()
                 self._allocate(seq, num_tokens)
