@@ -1,0 +1,238 @@
+from femtovllm.engine.kv_cache_manager import KVCacheManager
+from femtovllm.engine.request_queue import RequestQueue
+from femtovllm.engine.sequence import Sequence
+from femtovllm.engine.step_budget import StepBudget
+from femtovllm.protocol import StopReason
+
+
+class Scheduler:
+    """ """
+
+    def __init__(
+        self,
+        step_budget: StepBudget,
+        request_queue: RequestQueue,
+        kv_cache_manager: KVCacheManager,
+        max_kv_len_non_split: int,
+    ):
+        self.step_budget = step_budget
+        self.request_queue = request_queue
+        self.kv_cache_manager = kv_cache_manager
+
+        self.max_kv_len_non_split = max_kv_len_non_split
+
+    def _preempt(self):
+        """
+        [Atomic]
+        - running => waiting/swapped
+        - increase resource
+        """
+        seq = self.request_queue.preempt_running_tail()
+        seq.num_computed_tokens = 0
+        self.kv_cache_manager.free(seq)
+
+    def _allocate(self, seq, num_tokens):
+        """
+        [Atomic]
+        - decrease resource
+        """
+        self.step_budget.consume(num_tokens)
+        self.kv_cache_manager.allocate(seq, num_tokens)
+
+    def free_and_finish(
+        self,
+        seq: Sequence,
+        stop_reason: StopReason,
+    ):
+        """
+        [Atomic]
+        - increase resource
+        """
+        self.kv_cache_manager.free(seq)
+        seq.finish(stop_reason)
+
+    def _calc_limit_computation(self):
+        """ """
+        return min(
+            self.step_budget.max_tokens_per_seq,
+            self.step_budget.remaining_tokens,
+        )
+
+    def _calc_limit_hardware(self, seq: Sequence):
+        """ """
+        return self.max_kv_len_non_split - seq.num_tokens
+
+    def _schedule_running(self):
+        """ """
+        scheduled: list[tuple[Sequence, int]] = []
+        aborted: list[Sequence] = []
+        has_resource = True
+
+        for seq in self.request_queue.sort_and_copy_running():
+            # [STEP: seqs[curr:] are all preempted]
+            if not seq.is_running():
+                has_resource = False
+                break
+
+            ##############################
+            ##### determine num_tokens
+            ##############################
+            # [LIMIT: computation]
+            # truncate to fit computation limit
+            limit_computation = self._calc_limit_computation()
+            if limit_computation <= 0:
+                has_resource = False
+                break
+
+            num_tokens = min(
+                seq.num_uncomputed_tokens,
+                limit_computation,
+            )
+            if num_tokens <= 0:
+                raise RuntimeError(f"{seq=} strange {seq.num_uncomputed_tokens=}")
+
+            # [LIMIT: hardware]
+            # truncate to fit hardware limit
+            limit_hardware = self._calc_limit_hardware(seq)
+            if limit_hardware <= 0:
+                self.free_and_finish(seq, StopReason.HARDWARE_LIMIT)
+                continue
+
+            num_tokens = min(num_tokens, limit_hardware)
+
+            ##############################
+            ##### fulfill num_tokens
+            ##############################
+            # [LIMIT: computation]
+            # [budget]
+            fit_budget = self.step_budget.can_consume(num_tokens)
+            if not fit_budget:
+                has_resource = False
+                break
+
+            # [LIMIT: storage]
+            # [kv_cache]
+            fit_kv_cache = self.kv_cache_manager.can_allocate(seq, num_tokens)
+            while not fit_kv_cache:
+                has_resource = False
+
+                if self.request_queue.running_tail_is(seq):
+                    limit_kv_cache = self.kv_cache_manager.calc_max_tokens_allocable(
+                        seq
+                    )
+                    if limit_kv_cache <= 0:
+                        if self.request_queue.running_head_is(seq):
+                            # this seq requires more than entire kv_cache
+                            self.free_and_finish(seq, StopReason.OOM)
+                            aborted.append(seq)
+                        break
+
+                    # truncate to fit kv_cache limit
+                    num_tokens = min(num_tokens, limit_kv_cache)
+                else:
+                    self._preempt()
+
+                fit_kv_cache = self.kv_cache_manager.can_allocate(seq, num_tokens)
+
+            ##############################
+            ##### consume
+            ##############################
+            if (
+                #####
+                seq.is_running() and (num_tokens > 0) and fit_budget and fit_kv_cache
+            ):
+                self._allocate(seq, num_tokens)
+                scheduled.append(
+                    (seq, num_tokens),
+                )
+
+        return scheduled, aborted, has_resource
+
+    def _schedule_waiting(self):
+        """ """
+        scheduled: list[tuple[Sequence, int]] = []
+
+        while self.request_queue.size_waiting > 0:
+            # [STEP: highest priority waiting]
+            seq = self.request_queue.peek_waiting()
+            # [STEP: highest has been aborted]
+            if not seq.is_waiting():
+                self.request_queue.pop_waiting()
+                continue
+
+            ##############################
+            ##### determine num_tokens
+            ##############################
+            # [LIMIT: computation]
+            # [LIMIT: storage]
+            # truncate to fit both computation and storage limit
+            limit_both = min(
+                self._calc_limit_computation(),
+                self.kv_cache_manager.calc_max_tokens_allocable(seq),
+            )
+            if limit_both <= 0:
+                break
+
+            num_tokens = min(
+                seq.num_uncomputed_tokens,
+                limit_both,
+            )
+            if num_tokens <= 0:
+                raise RuntimeError(f"{seq=} strange {seq.num_uncomputed_tokens=}")
+
+            # [LIMIT: hardware]
+            # truncate to fit hardware limit
+            limit_hardware = self._calc_limit_hardware(seq)
+            if limit_hardware <= 0:
+                self.free_and_finish(seq, StopReason.HARDWARE_LIMIT)
+                continue
+
+            num_tokens = min(num_tokens, limit_hardware)
+
+            ##############################
+            ##### fulfill num_tokens
+            ##############################
+            # [LIMIT: computation]
+            # [budget]
+            fit_budget = self.step_budget.can_consume(num_tokens)
+
+            # [LIMIT: storage]
+            # [kv_cache]
+            fit_kv_cache = self.kv_cache_manager.can_allocate(seq, num_tokens)
+
+            ##############################
+            ##### consume
+            ##############################
+            if (
+                #####
+                seq.is_waiting() and (num_tokens > 0) and fit_budget and fit_kv_cache
+            ):
+                seq = self.request_queue.pop_waiting()
+                self._allocate(seq, num_tokens)
+                scheduled.append(
+                    (seq, num_tokens),
+                )
+            else:
+                break
+
+        return scheduled
+
+    def step(self):
+        """ """
+        self.request_queue.purge_zombie_finished()
+        self.step_budget.reset()
+
+        scheduled, aborted, has_resource = self._schedule_running()
+        if has_resource:
+            scheduled.extend(
+                self._schedule_waiting(),
+            )
+
+        return scheduled, aborted
+
+    def has_unfinished_sequences(self):
+        return not self.request_queue.is_empty()
+
+    def add_sequence(self, seq: Sequence):
+        """ """
+        self.request_queue.push_waiting(seq)
