@@ -26,5 +26,11 @@ class BlockAllocator:
 
         return [self.available_blocks.popleft() for _ in range(needed)]
 
-    def free(self, blocks: list[int]):
-        self.available_blocks.extend(blocks)
+    def free(
+        self,
+        block_or_blocks: int | list[int],
+    ):
+        if isinstance(block_or_blocks, int):
+            self.available_blocks.append(block_or_blocks)
+        else:
+            self.available_blocks.extend(block_or_blocks)

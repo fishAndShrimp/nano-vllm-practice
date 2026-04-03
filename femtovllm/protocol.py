@@ -1,6 +1,6 @@
 import dataclasses
 import enum
-from typing import Optional, TypeAlias
+from typing import NamedTuple, Optional, TypeAlias
 
 import torch
 
@@ -72,27 +72,16 @@ ReqId: TypeAlias = int | str
 SeqId: TypeAlias = int | str
 
 
-class StepDelta:
+class StepDelta(NamedTuple):
     """
-    streaming out shared by entrypoints and engine
-    - use __slots__ rather than __dict__ to speed up
+    Streaming out shared by entrypoints and engine.
+    Implemented as a NamedTuple for:
+    1. Fastest instantiation (bypasses Python __init__)
+    2. Zero memory overhead (no __dict__)
+    3. Strict immutability (safe for streaming queues)
     """
 
-    __slots__ = (
-        "req_id",
-        "seq_id",
-        "new_token_id",
-        "stop_reason",
-    )
-
-    def __init__(
-        self,
-        req_id: ReqId,
-        seq_id: SeqId,
-        new_token_id: int,
-        stop_reason: Optional[StopReason],
-    ):
-        self.req_id = req_id
-        self.seq_id = seq_id
-        self.new_token_id = new_token_id
-        self.stop_reason = stop_reason
+    req_id: ReqId
+    seq_id: SeqId
+    new_token_id: int
+    stop_reason: Optional[StopReason]

@@ -191,25 +191,46 @@ class CoreEngine:
 
         for i, (seq, num_step_tokens) in enumerate(scheduled):
             ##############################
-            ##### maintain seq
-            ##### - num_computed_tokens
-            ##### - append(token_id)
+            ##### [STEP: Post-Forward State Update & Commit]
+            ##### The transformer has successfully computed KV caches for `num_step_tokens`.
+            ##### 1. Advance the logical computed length.
+            ##### 2. Commit these newly computed blocks to the global Prefix Tree.
+            ##### This critical timepoint ensures the blocks are immediately
+            ##### available for cross-sequence sharing and scheduler prioritization.
             ##############################
             seq.num_computed_tokens += num_step_tokens
+            self.scheduler.commit_blocks(seq)
+
+            ##############################
+            ##### [STEP: Chunked Prefill Check]
+            ##### If the sequence is still in the prefill phase (e.g., prompt is
+            ##### split into multiple chunks), no new token is generated yet.
+            ##############################
             if seq.is_prefilling:
                 continue
 
+            ##############################
+            ##### [STEP: Append Predicted Token]
+            ##### Append the newly decoded token.
+            ##### State Transition: The sequence now has 1 uncomputed token again,
+            ##### making it ready for the next decode step.
+            ##############################
             token_id = token_ids_next[i]
             seq.append(token_id)
-            ##############################
-            ##### maintain seq
-            ##############################
 
+            ##############################
+            ##### [STEP: Check Termination Conditions]
+            ##### Free resources immediately if the sequence hits EOS or length limits.
+            ##############################
             if token_id in seq.stop_token_ids_set:
                 self.scheduler.free_and_finish(seq, StopReason.EOS)
             elif seq.num_new_tokens >= seq.sampling_params.max_new_tokens:
                 self.scheduler.free_and_finish(seq, StopReason.LENGTH)
 
+            ##############################
+            ##### [STEP: Construct Stream Output]
+            ##### Record the state delta for the client response stream.
+            ##############################
             step_deltas.append(
                 StepDelta(
                     req_id=seq.req_id,
