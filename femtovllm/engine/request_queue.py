@@ -9,6 +9,21 @@ class SchedulingPolicy(enum.Enum):
 
 
 class RequestQueue:
+    """
+    [Architectural Note]
+    Currently stores flattened `Sequence` objects rather than `Request` or `SequenceGroup`.
+    This is a deliberate design choice, not a conceptual confusion.
+
+    Because the scheduler does not yet support `suspend`/`swap` mechanisms, enforcing
+    gang-scheduling for grouped sequences (e.g., for Beam Search or Parallel Sampling)
+    would trigger strict "all-or-nothing" memory allocations. Under memory pressure,
+    this would force the engine to abort entire request groups, causing catastrophic
+    compute waste and severe resource fragmentation.
+
+    Until `suspend` is implemented, treating individual sequences as independent
+    scheduling units is the optimal strategy to maximize throughput.
+    """
+
     def __init__(self):
         self._running: list[Sequence] = []
         self._waiting: deque[Sequence] = deque()

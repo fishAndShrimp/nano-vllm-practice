@@ -288,13 +288,12 @@ class SchedulerV3:
     ##############################
     ##### [ ARCHITECTURAL NOTE: Prefix-Aware Scheduling ]
     ##### From this point forward, KVCacheManager and Scheduler are irreversibly coupled.
-    ##### As the engine evolves, the KV Cache is no longer just passive storage;
-    ##### it actively dictates scheduling decisions.
+    ##### The KV Cache is no longer just passive storage; it actively dictates scheduling.
     #####
-    ##### - Current: Deduplicates newly computed blocks by merging them into the tree.
-    ##### - Future: The Scheduler will natively query the Prefix Tree to fast-forward
-    #####   `num_computed_tokens` (Prompt Caching) and reorder sequences based on
-    #####   prefix match lengths. The Scheduler MUST be Prefix-Tree native.
+    ##### - Prompt Caching: The Scheduler natively queries the Prefix Tree to fast-forward
+    #####   `num_computed_tokens` and reorder sequences based on prefix match lengths.
+    ##### - Deduplication: Newly computed blocks are dynamically merged into the tree.
+    ##### The Scheduler is strictly Prefix-Tree native.
     ##############################
     def ensure_sequence_state(self, seq: Sequence):
         """ """
@@ -439,10 +438,9 @@ class SchedulerV3:
         ##############################
         ##### must maintain:
         ##### - chain
-        ##### - ref_count
+        ##### - pin/unpin node
         ##### - block_table
         ##### - num_computed_tokens
-        ##### TOO MANY! combine chain ref_count in future scheduler
         ##############################
 
         ##### chain

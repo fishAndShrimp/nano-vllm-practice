@@ -108,7 +108,7 @@ class CoreEngine:
         # [STEP: scheduler]
         max_kv_len_non_split = self.calc_max_kv_len_non_split()
 
-        self.scheduler = {
+        self.scheduler: Scheduler | SchedulerV3 = {
             1: Scheduler,
             3: SchedulerV3,
         }[femtovllm._DEV.scheduler_version](
