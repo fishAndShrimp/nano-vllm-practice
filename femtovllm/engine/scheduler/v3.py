@@ -423,7 +423,7 @@ class Scheduler:
         num_blocks_solid = len(chain_old) - 1
         chain_old.extend(chain_extend)
         for i_node in chain_extend:
-            i_node.ref_count += 1
+            prefix_tree.pin_node(i_node)
 
         ##### block_table
         ##### clean dangling blocks

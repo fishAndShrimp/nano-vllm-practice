@@ -1,4 +1,4 @@
-from collections import deque
+from collections import OrderedDict, deque
 from typing import Optional
 
 from femtovllm.engine.kv_cache_manager.block_allocator import BlockAllocator
@@ -20,7 +20,7 @@ class PrefixTreeNode:
         self.token_id_chunk = token_id_chunk
         self.parent = parent
 
-        self.ref_count = 1
+        self.ref_count = 0
         self.children: dict[tuple[int, ...], PrefixTreeNode] = {}
 
 
@@ -36,13 +36,31 @@ class PrefixTree:
         """ """
         self.block_size = block_size
 
+        # paths from the root (include) to leaves
+        self.chains: dict[SeqId, list[PrefixTreeNode]] = {}
+
+        self.evictable_nodes: OrderedDict[PrefixTreeNode, bool] = OrderedDict()
+
         self.root = PrefixTreeNode(
             physical_block_idx=-1,
             token_id_chunk=None,
             parent=None,
         )
-        # paths from the root (include) to leaves
-        self.chains: dict[SeqId, list[PrefixTreeNode]] = {}
+        self.pin_node(self.root)
+
+    def pin_node(self, node: PrefixTreeNode):
+        node.ref_count += 1
+
+        if node in self.evictable_nodes:
+            del self.evictable_nodes[node]
+
+    def unpin_node(self, node: PrefixTreeNode):
+        node.ref_count -= 1
+
+        if node.ref_count == 0:
+            self.evictable_nodes[node] = True
+        elif node.ref_count < 0:
+            raise RuntimeError("")
 
     def ensure_chain(self, seq_const: Sequence):
         if seq_const.seq_id in self.chains:
@@ -50,7 +68,7 @@ class PrefixTree:
         self.chains[seq_const.seq_id] = [
             self.root,
         ]
-        self.root.ref_count += 1
+        self.pin_node(self.root)
 
     def merge_block_table(
         self,
@@ -124,7 +142,6 @@ class PrefixTree:
                 redundant_block_indices.append(block_table_ref[logical_block_idx])
                 block_table_ref[logical_block_idx] = node_curr.physical_block_idx
 
-                node_curr.ref_count += 1
             else:
                 # new a node and connect
                 node_curr = PrefixTreeNode(
@@ -136,6 +153,7 @@ class PrefixTree:
 
             # append existing or new
             chain.append(node_curr)
+            self.pin_node(node_curr)
 
         return redundant_block_indices
 
@@ -243,7 +261,7 @@ class KVCacheManagerV3:
         - block_tables
 
         - tree.chains
-            - node.ref_count
+            - unpin_node
         """
         num_blocks_committed = 0
 
@@ -252,9 +270,7 @@ class KVCacheManagerV3:
             num_blocks_committed = len(chain) - 1
 
             for i_node in reversed(chain):
-                i_node.ref_count -= 1
-                if i_node.ref_count <= 0:
-                    self.nodes_lazy.append(i_node)
+                self.prefix_tree.unpin_node(i_node)
 
             del self.prefix_tree.chains[seq_const.seq_id]
 
