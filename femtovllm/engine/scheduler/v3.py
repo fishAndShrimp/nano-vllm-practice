@@ -1,5 +1,5 @@
 from femtovllm.engine.kv_cache_manager import KVCacheManagerV3
-from femtovllm.engine.kv_cache_manager.v3 import PrefixTreeNode
+from femtovllm.engine.kv_cache_manager.v3 import PrefixMatch, PrefixTreeNode
 from femtovllm.engine.request_queue import RequestQueue
 from femtovllm.engine.sequence import Sequence
 from femtovllm.engine.step_budget import StepBudget
@@ -171,11 +171,13 @@ class Scheduler:
             ##### determine num_tokens
             ##############################
             # cache-aware effective length
-            effective_prefix_len = self.fast_forward_prefix(
+            prefix_match = self.fast_forward_prefix(
                 seq,
                 dry_run=True,
             )
-            effective_uncomputed_len = seq.num_tokens - effective_prefix_len
+            effective_uncomputed_len = (
+                seq.num_tokens - prefix_match.num_effective_tokens
+            )
 
             # [LIMIT: computation]
             # [LIMIT: storage]
@@ -184,7 +186,7 @@ class Scheduler:
                 self._calc_limit_computation(),
                 self.kv_cache_manager.calc_max_tokens_allocable(
                     seq,
-                    effective_prefix_len=effective_prefix_len,
+                    prefix_match=prefix_match,
                 ),
             )
             if limit_both <= 0:
@@ -219,7 +221,7 @@ class Scheduler:
             fit_kv_cache = self.kv_cache_manager.can_allocate(
                 seq,
                 num_tokens,
-                effective_prefix_len=effective_prefix_len,
+                prefix_match=prefix_match,
             )
 
             ##############################
@@ -302,7 +304,7 @@ class Scheduler:
         self,
         seq: Sequence,
         dry_run: bool,
-    ) -> int:
+    ):
         """
         [State Transition: Prompt Caching]
         Query the global prefix tree to skip computation for cached tokens.
@@ -317,7 +319,7 @@ class Scheduler:
         ##### fast forward unit is block_size
         ##############################
         if seq.num_uncomputed_tokens < block_size:
-            return seq.num_computed_tokens
+            return PrefixMatch(seq.num_computed_tokens, 0)
 
         chain_old: list[PrefixTreeNode] = prefix_tree.chains.get(
             seq.seq_id,
@@ -327,6 +329,7 @@ class Scheduler:
 
         num_cached_tokens = (len(chain_old) - 1) * block_size
         node_curr = chain_old[-1]
+        num_reclaimed_blocks = 0
 
         while num_cached_tokens + block_size <= seq.num_tokens:
             ptr_next = tuple(
@@ -340,9 +343,12 @@ class Scheduler:
             chain_extend.append(node_next)
             node_curr = node_next
 
+            if node_curr.is_evictable:
+                num_reclaimed_blocks += 1
+
         # strictly no benefit
         if num_cached_tokens <= seq.num_computed_tokens:
-            return seq.num_computed_tokens
+            return PrefixMatch(seq.num_computed_tokens, 0)
 
         ##### (L-1) rule
         # =====================================================================
@@ -376,9 +382,14 @@ class Scheduler:
         if num_cached_tokens == seq.num_tokens:
             num_cached_tokens -= 1
 
-        # due to (L-1), but still no benefit
+        # [TRADE-OFF: VRAM vs. Complexity]
+        # In theory, we could `pass` here to immediately free the dangling blocks.
+        # However, doing so would require returning `num_dangling_blocks` to the
+        # scheduler, polluting the PrefixMatch signature and complicating the state machine.
+        # Since this 1-block redundancy only lasts for a single step (a few milliseconds)
+        # before `commit_blocks()` cleans it up, we return early to keep the architecture clean.
         if num_cached_tokens <= seq.num_computed_tokens:
-            return seq.num_computed_tokens
+            return PrefixMatch(seq.num_computed_tokens, 0)
 
         ##############################
         ##### confirm fast forward to num_cached_tokens
@@ -388,7 +399,7 @@ class Scheduler:
         ##### dry run
         ##############################
         if dry_run:
-            return num_cached_tokens
+            return PrefixMatch(num_cached_tokens, num_reclaimed_blocks)
 
         ##############################
         ##### actual run
@@ -441,4 +452,4 @@ class Scheduler:
         ##### num_computed_tokens
         seq.num_computed_tokens = num_cached_tokens
 
-        return num_cached_tokens
+        return PrefixMatch(num_cached_tokens, num_reclaimed_blocks)

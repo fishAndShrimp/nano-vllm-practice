@@ -1,5 +1,5 @@
-from collections import OrderedDict, deque
-from typing import Optional
+from collections import OrderedDict
+from typing import NamedTuple, Optional
 
 from femtovllm.engine.kv_cache_manager.block_allocator import BlockAllocator
 from femtovllm.engine.sequence import Sequence
@@ -22,6 +22,17 @@ class PrefixTreeNode:
 
         self.ref_count = 0
         self.children: dict[tuple[int, ...], PrefixTreeNode] = {}
+
+    @property
+    def is_evictable(self) -> bool:
+        return self.ref_count <= 0
+
+
+class PrefixMatch(NamedTuple):
+    """ """
+
+    num_effective_tokens: int
+    num_reclaimed_blocks: int
 
 
 class PrefixTree:
@@ -181,7 +192,6 @@ class KVCacheManagerV3:
         self.prefix_tree = PrefixTree(
             block_size=block_size,
         )
-        self.nodes_lazy: deque[PrefixTreeNode] = deque()
 
         # block perspective
         self.block_allocator = BlockAllocator(
@@ -194,17 +204,22 @@ class KVCacheManagerV3:
         self,
         seq_const: Sequence,
         num_scheduled_tokens: int,
-        effective_prefix_len: int = 0,
+        prefix_match: Optional[PrefixMatch] = None,
     ):
         block_size = self.block_size
 
-        effective_prefix_len = max(
-            effective_prefix_len,
-            seq_const.num_computed_tokens,
+        num_effective_tokens = (
+            seq_const.num_computed_tokens
+            if (prefix_match is None)
+            else max(
+                seq_const.num_computed_tokens,
+                prefix_match.num_effective_tokens,
+            )
         )
-        num_curr_blocks = (effective_prefix_len + block_size - 1) // block_size
 
-        num_total_tokens = effective_prefix_len + num_scheduled_tokens
+        num_curr_blocks = (num_effective_tokens + block_size - 1) // block_size
+
+        num_total_tokens = num_effective_tokens + num_scheduled_tokens
         num_total_blocks = (num_total_tokens + block_size - 1) // block_size
         needed = num_total_blocks - num_curr_blocks
 
@@ -214,14 +229,18 @@ class KVCacheManagerV3:
         self,
         seq_const: Sequence,
         num_scheduled_tokens: int,
-        effective_prefix_len: int = 0,
+        prefix_match: Optional[PrefixMatch] = None,
     ):
         needed = self._calc_needed_blocks(
             seq_const,
             num_scheduled_tokens,
-            effective_prefix_len=effective_prefix_len,
+            prefix_match=prefix_match,
         )
-        return self.block_allocator.can_allocate(needed)
+        return self.block_allocator.can_allocate(
+            needed
+            - len(self.prefix_tree.evictable_nodes)
+            + (0 if (prefix_match is None) else prefix_match.num_reclaimed_blocks)
+        )
 
     def allocate(
         self,
@@ -235,6 +254,11 @@ class KVCacheManagerV3:
             seq_const,
             num_scheduled_tokens,
         )
+
+        num_idle_blocks = self.block_allocator.count_available()
+        if needed > num_idle_blocks:
+            self.evict_nodes(needed - num_idle_blocks)
+
         r = self.block_allocator.allocate(needed)
 
         self.ensure_block_table(seq_const)
@@ -254,6 +278,21 @@ class KVCacheManagerV3:
         return len(
             self.block_tables.get(seq_const.seq_id, []),
         )
+
+    def evict_nodes(self, num_evict):
+        """ """
+        for _ in range(num_evict):
+            a_node, _ = self.prefix_tree.evictable_nodes.popitem(
+                ##########
+                ##### make sure FIFO
+                ##### or the topological order [ leaf => root ]
+                ##### will be ruined
+                ##########
+                last=False,
+            )
+
+            self.block_allocator.free(a_node.physical_block_idx)
+            del a_node.parent.children[a_node.token_id_chunk]
 
     def free(self, seq_const: Sequence):
         """
@@ -290,7 +329,7 @@ class KVCacheManagerV3:
     def calc_max_tokens_allocable(
         self,
         seq_const: Sequence,
-        effective_prefix_len: int = 0,
+        prefix_match: Optional[PrefixMatch] = None,
     ):
         """
         sum of:
@@ -299,15 +338,25 @@ class KVCacheManagerV3:
         """
         block_size = self.block_size
 
-        effective_prefix_len = max(
-            effective_prefix_len,
-            seq_const.num_computed_tokens,
+        num_effective_tokens = (
+            seq_const.num_computed_tokens
+            if (prefix_match is None)
+            else max(
+                seq_const.num_computed_tokens,
+                prefix_match.num_effective_tokens,
+            )
         )
-        num_curr_blocks = (effective_prefix_len + block_size - 1) // block_size
 
-        max_usable_blocks = num_curr_blocks + self.block_allocator.count_available()
+        num_curr_blocks = (num_effective_tokens + block_size - 1) // block_size
+
+        max_usable_blocks = (
+            num_curr_blocks
+            + self.block_allocator.count_available()
+            + len(self.prefix_tree.evictable_nodes)
+            - (0 if (prefix_match is None) else prefix_match.num_reclaimed_blocks)
+        )
 
         return max(
             0,
-            max_usable_blocks * block_size - effective_prefix_len,
+            max_usable_blocks * block_size - num_effective_tokens,
         )
