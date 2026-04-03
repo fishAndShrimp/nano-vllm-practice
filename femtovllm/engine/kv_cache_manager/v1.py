@@ -27,11 +27,14 @@ class KVCacheManager:
         num_scheduled_tokens: int,
     ):
         block_size = self.block_size
-        block_table = self.get_block_table(seq_const)
 
-        total_tokens = seq_const.num_computed_tokens + num_scheduled_tokens
-        total_blocks = (total_tokens + block_size - 1) // block_size
-        needed = total_blocks - len(block_table)
+        num_effective_tokens = seq_const.num_computed_tokens
+
+        num_curr_blocks = (num_effective_tokens + block_size - 1) // block_size
+
+        num_total_tokens = num_effective_tokens + num_scheduled_tokens
+        num_total_blocks = (num_total_tokens + block_size - 1) // block_size
+        needed = num_total_blocks - num_curr_blocks
 
         return needed
 
@@ -60,12 +63,23 @@ class KVCacheManager:
         )
         r = self.block_allocator.allocate(needed)
 
-        if seq_const.seq_id not in self.block_tables:
-            self.block_tables[seq_const.seq_id] = []
+        self.ensure_block_table(seq_const)
         self.get_block_table(seq_const).extend(r)
 
+    def ensure_block_table(self, seq_const: Sequence):
+        if seq_const.seq_id in self.block_tables:
+            return
+        self.block_tables[seq_const.seq_id] = []
+
     def get_block_table(self, seq_const: Sequence) -> list[int]:
-        return self.block_tables.get(seq_const.seq_id, [])
+        return self.block_tables[seq_const.seq_id]
+
+    def get_block_table_len(self, seq_const: Sequence) -> int:
+        """ """
+        # use .get() to decrease hash check times from 2 to 1
+        return len(
+            self.block_tables.get(seq_const.seq_id, []),
+        )
 
     def free(self, seq_const: Sequence):
         if seq_const.seq_id not in self.block_tables:
@@ -87,10 +101,14 @@ class KVCacheManager:
         - remaining blocks
         """
         block_size = self.block_size
-        block_table = self.get_block_table(seq_const)
 
-        num_blocks = len(block_table) + self.block_allocator.count_available()
-        return (
-            #####
-            num_blocks * block_size - seq_const.num_computed_tokens
+        num_effective_tokens = seq_const.num_computed_tokens
+
+        num_curr_blocks = (num_effective_tokens + block_size - 1) // block_size
+
+        max_usable_blocks = num_curr_blocks + self.block_allocator.count_available()
+
+        return max(
+            0,
+            max_usable_blocks * block_size - num_effective_tokens,
         )

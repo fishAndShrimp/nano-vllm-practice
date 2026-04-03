@@ -236,3 +236,9 @@ class Scheduler:
     def add_sequence(self, seq: Sequence):
         """ """
         self.request_queue.push_waiting(seq)
+
+    def commit_blocks(self, seq: Sequence):
+        """
+        For CoreEngine compatitable
+        """
+        pass
