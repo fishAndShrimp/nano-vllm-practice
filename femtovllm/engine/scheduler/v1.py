@@ -10,16 +10,31 @@ class Scheduler:
 
     def __init__(
         self,
-        step_budget: StepBudget,
-        request_queue: RequestQueue,
-        kv_cache_manager: KVCacheManager,
+        max_seqs: int,
+        max_tokens: int,
+        max_tokens_per_seq: int,
+        num_blocks: int,
+        block_size: int,
         max_kv_len_non_split: int,
     ):
-        self.step_budget = step_budget
-        self.request_queue = request_queue
-        self.kv_cache_manager = kv_cache_manager
+        """ """
+        self.step_budget = StepBudget(
+            max_seqs=max_seqs,
+            max_tokens=max_tokens,
+            max_tokens_per_seq=max_tokens_per_seq,
+        )
+
+        self.request_queue = RequestQueue()
+
+        self.kv_cache_manager = KVCacheManager(
+            num_blocks=num_blocks,
+            block_size=block_size,
+        )
 
         self.max_kv_len_non_split = max_kv_len_non_split
+
+    def get_block_table(self, seq: Sequence):
+        return self.kv_cache_manager.get_block_table(seq)
 
     def _preempt(self):
         """

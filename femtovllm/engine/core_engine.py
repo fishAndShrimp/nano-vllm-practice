@@ -5,12 +5,9 @@ import torch
 from transformers import Qwen3Config
 
 import femtovllm.ops
-from femtovllm.engine.kv_cache_manager import KVCacheManager
 from femtovllm.engine.model_runner import ModelRunner
-from femtovllm.engine.request_queue import RequestQueue
-from femtovllm.engine.scheduler import Scheduler
+from femtovllm.engine.scheduler import Scheduler, SchedulerV3
 from femtovllm.engine.sequence import Sequence
-from femtovllm.engine.step_budget import StepBudget
 from femtovllm.protocol import ReqId, SamplingParams, StepDelta, StopReason
 
 
@@ -108,23 +105,18 @@ class CoreEngine:
         ##### [PARSE: user config]
         ##########
 
-        # [STEP: kv cache manager]
-        kv_cache_manager = KVCacheManager(
-            num_blocks=num_blocks,
-            block_size=block_size,
-        )
-
         # [STEP: scheduler]
         max_kv_len_non_split = self.calc_max_kv_len_non_split()
 
-        self.scheduler = Scheduler(
-            step_budget=StepBudget(
-                max_seqs=max_seqs,
-                max_tokens=max_tokens,
-                max_tokens_per_seq=max_tokens_per_seq,
-            ),
-            request_queue=RequestQueue(),
-            kv_cache_manager=kv_cache_manager,
+        self.scheduler = {
+            1: Scheduler,
+            3: SchedulerV3,
+        }[femtovllm._DEV.scheduler_version](
+            max_seqs=max_seqs,
+            max_tokens=max_tokens,
+            max_tokens_per_seq=max_tokens_per_seq,
+            num_blocks=num_blocks,
+            block_size=block_size,
             max_kv_len_non_split=max_kv_len_non_split,
         )
 
@@ -179,7 +171,7 @@ class CoreEngine:
             v_cache_pools=self.v_cache_pools,
             raw_block_tables=[
                 #####
-                self.scheduler.kv_cache_manager.get_block_table(x)
+                self.scheduler.get_block_table(x)
                 for x, _ in scheduled
             ],
         )

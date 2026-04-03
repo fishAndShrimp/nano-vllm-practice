@@ -1,26 +1,44 @@
-from femtovllm.engine.kv_cache_manager import KVCacheManagerV3
-from femtovllm.engine.kv_cache_manager.v3 import PrefixMatch, PrefixTreeNode
+from femtovllm.engine.kv_cache_manager.v3 import (
+    KVCacheManagerV3,
+    PrefixMatch,
+    PrefixTreeNode,
+)
 from femtovllm.engine.request_queue import RequestQueue
 from femtovllm.engine.sequence import Sequence
 from femtovllm.engine.step_budget import StepBudget
 from femtovllm.protocol import StopReason
 
 
-class Scheduler:
+class SchedulerV3:
     """ """
 
     def __init__(
         self,
-        step_budget: StepBudget,
-        request_queue: RequestQueue,
-        kv_cache_manager: KVCacheManagerV3,
+        max_seqs: int,
+        max_tokens: int,
+        max_tokens_per_seq: int,
+        num_blocks: int,
+        block_size: int,
         max_kv_len_non_split: int,
     ):
-        self.step_budget = step_budget
-        self.request_queue = request_queue
-        self.kv_cache_manager = kv_cache_manager
+        """ """
+        self.step_budget = StepBudget(
+            max_seqs=max_seqs,
+            max_tokens=max_tokens,
+            max_tokens_per_seq=max_tokens_per_seq,
+        )
+
+        self.request_queue = RequestQueue()
+
+        self.kv_cache_manager = KVCacheManagerV3(
+            num_blocks=num_blocks,
+            block_size=block_size,
+        )
 
         self.max_kv_len_non_split = max_kv_len_non_split
+
+    def get_block_table(self, seq: Sequence):
+        return self.kv_cache_manager.get_block_table(seq)
 
     def _preempt(self):
         """
