@@ -71,7 +71,10 @@ class PrefixTree:
         if node.ref_count == 0:
             self.evictable_nodes[node] = True
         elif node.ref_count < 0:
-            raise RuntimeError("")
+            raise RuntimeError(
+                f"Negative reference count ({node.ref_count}) detected for PrefixTreeNode. "
+                "This indicates a double-free or mismatched pin/unpin operation in the KV Cache."
+            )
 
     def ensure_chain(self, seq_const: Sequence):
         if seq_const.seq_id in self.chains:
@@ -92,7 +95,10 @@ class PrefixTree:
         Return the physical block indices of the redundant
         """
         if seq_const.seq_id not in self.chains:
-            raise RuntimeError("")
+            raise RuntimeError(
+                f"Sequence {seq_const.seq_id} not found in PrefixTree chains. "
+                "ensure_chain() must be called before merge_block_table() to initialize the root path."
+            )
 
         block_size = self.block_size
         chain = self.chains[seq_const.seq_id]
