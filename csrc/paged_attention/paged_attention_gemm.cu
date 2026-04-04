@@ -8,6 +8,9 @@
 using femtovllm::kDimHead;
 using femtovllm::kTileSize;
 
+using femtovllm::kKVLenPerPage;
+using femtovllm::kNumPagesPerTile;
+
 template <typename scalar_t>
 __global__ void PagedAttentionGemmKernel(
     const scalar_t* __restrict__ q_batched,
@@ -106,7 +109,9 @@ __global__ void PagedAttentionGemmKernel(
             // [STEP: load k from pool]
             for (int col = 0; col < kTileSize; col++) {
                 auto row = threadIdx.x;
-                auto page_idx = page_table[tile_idx];
+                auto page_idx = page_table
+                    [tile_idx * kNumPagesPerTile +
+                     col / kKVLenPerPage];
 
                 if ((kTileSize * phase + row) < dim_d &&
                     (kTileSize * tile_idx + col) < kv_len) {
@@ -115,10 +120,21 @@ __global__ void PagedAttentionGemmKernel(
                     // dim_d)
                     // We need q@k.T therefore k_pool is
                     // picked by a transposed order
+                    //
+                    //    k.T[kv_head_idx]
+                    //       [kt_row][kt_col]
+                    //      k[kv_head_idx]
+                    //       [kt_col][kt_row]
+                    //
+                    // k_pool[page_idx][kv_head_idx]
+                    //       [kt_col % kv_len_per_page]
+                    //       [kt_row]
+
                     sdata.k[row][col] = k_pool
                         [pool_stride_0 * page_idx +
                          pool_stride_1 * kv_head_idx +
-                         pool_stride_2 * col +
+                         pool_stride_2 *
+                             (col % kKVLenPerPage) +
                          (kTileSize * phase + row)];
                 } else {
                     sdata.k[row][col] =
@@ -197,15 +213,26 @@ __global__ void PagedAttentionGemmKernel(
             // [STEP: load v]
             for (int row = 0; row < kTileSize; row++) {
                 auto col = threadIdx.x;
-                auto page_idx = page_table[tile_idx];
+                auto page_idx = page_table
+                    [tile_idx * kNumPagesPerTile +
+                     row / kKVLenPerPage];
 
                 if ((kTileSize * tile_idx + row) < kv_len &&
                     (kTileSize * phase + col) < dim_d) {
                     // pick v from v_pool
+                    //
+                    //      v[kv_head_idx]
+                    //       [v_row][v_col]
+                    //
+                    // v_pool[page_idx][kv_head_idx]
+                    //       [v_row % kv_len_per_page]
+                    //       [v_col]
+
                     sdata.v[row][col] = v_pool
                         [pool_stride_0 * page_idx +
                          pool_stride_1 * kv_head_idx +
-                         pool_stride_2 * row +
+                         pool_stride_2 *
+                             (row % kKVLenPerPage) +
                          (kTileSize * phase + col)];
                 } else {
                     sdata.v[row][col] =

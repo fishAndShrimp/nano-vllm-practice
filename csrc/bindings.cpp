@@ -58,6 +58,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         femtovllm::kMaxKVLenNonSplit;
 
     m.attr("kTileSize") = femtovllm::kTileSize;
+    m.attr("kKVLenPerPage") = femtovllm::kKVLenPerPage;
     m.attr("kDimHead") = femtovllm::kDimHead;
 
     m.def("VecAddCuda", &VecAddCuda)
