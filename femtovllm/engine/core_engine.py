@@ -52,11 +52,11 @@ class CoreEngine:
 
         # static block_size
         block_size = int(block_size)
-        if block_size != femtovllm.ops.TILE_SIZE:
+        if block_size != femtovllm.ops.KV_LEN_PER_PAGE:
             raise NotImplementedError(
                 f"Dynamic block sizes are not yet supported (got {block_size}). "
-                f"Please set block_size={femtovllm.ops.TILE_SIZE} "
-                "to match the hardware-aligned tile size of the custom GEMM/GEMV kernels."
+                f"Please set block_size={femtovllm.ops.KV_LEN_PER_PAGE} "
+                "to match the hardware-aligned page size (KV_LEN_PER_PAGE) of the custom kernels."
             )
         ##### [STEP: block]
 

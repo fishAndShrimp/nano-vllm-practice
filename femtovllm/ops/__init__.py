@@ -16,6 +16,7 @@ except ImportError as e:
 MAX_KV_LEN_NON_SPLIT = _cuda_backend.kMaxKVLenNonSplit
 
 TILE_SIZE = _cuda_backend.kTileSize
+KV_LEN_PER_PAGE = _cuda_backend.kKVLenPerPage
 # The CUDA backend strictly operates on fixed kDimHead lengths for register allocation.
 # Therefore, this is an exact DIM_HEAD, not a MAX_DIM_HEAD limit.
 DIM_HEAD = _cuda_backend.kDimHead
