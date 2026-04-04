@@ -1,0 +1,20 @@
+name: vllm_bench
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # Pin Python version to exactly match the femtovllm main environment
+  # for fair runtime overhead comparison.
+  - python=3.10
+
+  - pip
+  - pandas
+
+  - pip:
+      # Force CUDA 12.1 PyTorch wheels.
+      # This guarantees hardware-level fairness by aligning the underlying
+      # CUDA runtime with our custom-compiled kernels.
+      - --extra-index-url https://download.pytorch.org/whl/cu121
+
+      # Fetch the official pre-compiled vLLM for baseline testing.
+      - vllm
