@@ -19,30 +19,30 @@ torch::Tensor OnlineSoftmaxCuda(torch::Tensor a);
 torch::Tensor BatchedOnlineSoftmaxCuda(torch::Tensor a);
 
 torch::Tensor GemmCuda(torch::Tensor a, torch::Tensor b);
-torch::Tensor
-GemmRowWiseCuda(torch::Tensor a, torch::Tensor b);
+// torch::Tensor
+// GemmRowWiseCuda(torch::Tensor a, torch::Tensor b);
 
-torch::Tensor FlashAttentionCuda(
-    torch::Tensor q,
-    torch::Tensor k,
-    torch::Tensor v
-);
-torch::Tensor FlashAttentionCoalescedCuda(
-    torch::Tensor q,
-    torch::Tensor k,
-    torch::Tensor v
-);
+// torch::Tensor FlashAttentionCuda(
+//     torch::Tensor q,
+//     torch::Tensor k,
+//     torch::Tensor v
+// );
+// torch::Tensor FlashAttentionCoalescedCuda(
+//     torch::Tensor q,
+//     torch::Tensor k,
+//     torch::Tensor v
+// );
 
-torch::Tensor PagedAttentionGemmCuda(
-    torch::Tensor q,
-    torch::Tensor k_pool,
-    torch::Tensor v_pool,
-    torch::Tensor cu_seqlens,
-    int max_q_len,
-    torch::Tensor kv_page_tables,
-    torch::Tensor kv_lens,
-    torch::Tensor positions
-);
+// torch::Tensor PagedAttentionGemmCuda(
+//     torch::Tensor q,
+//     torch::Tensor k_pool,
+//     torch::Tensor v_pool,
+//     torch::Tensor cu_seqlens,
+//     int max_q_len,
+//     torch::Tensor kv_page_tables,
+//     torch::Tensor kv_lens,
+//     torch::Tensor positions
+// );
 
 torch::Tensor PagedAttentionGemvCuda(
     torch::Tensor q,
@@ -73,16 +73,16 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
             &BatchedOnlineSoftmaxCuda
         )
         .def("GemmCuda", &GemmCuda)
-        .def("GemmRowWiseCuda", &GemmRowWiseCuda)
-        .def("FlashAttentionCuda", &FlashAttentionCuda)
-        .def(
-            "FlashAttentionCoalescedCuda",
-            &FlashAttentionCoalescedCuda
-        )
-        .def(
-            "PagedAttentionGemmCuda",
-            &PagedAttentionGemmCuda
-        )
+        // .def("GemmRowWiseCuda", &GemmRowWiseCuda)
+        // .def("FlashAttentionCuda", &FlashAttentionCuda)
+        // .def(
+        //     "FlashAttentionCoalescedCuda",
+        //     &FlashAttentionCoalescedCuda
+        // )
+        // .def(
+        //     "PagedAttentionGemmCuda",
+        //     &PagedAttentionGemmCuda
+        // )
         .def(
             "PagedAttentionGemvCuda",
             &PagedAttentionGemvCuda
