@@ -94,9 +94,7 @@ torch::Tensor BatchedOnlineSoftmaxCuda(torch::Tensor a) {
     int size = a.size(-1);
     int batches = a.numel() / size;
 
-    AT_DISPATCH_FLOATING_TYPES_AND2(
-        at::ScalarType::Half,
-        at::ScalarType::BFloat16,
+    AT_DISPATCH_REDUCED_FLOATING_TYPES(
         a.scalar_type(),
         "BatchedOnlineSoftmaxCuda",
         ([&] {

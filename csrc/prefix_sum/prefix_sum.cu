@@ -66,7 +66,7 @@ torch::Tensor PrefixSumCuda(torch::Tensor a) {
     int threads = kThreadsPerBlock;
     TORCH_CHECK_EQ((threads & (threads - 1)) == 0, true);
 
-    AT_DISPATCH_FLOATING_TYPES_AND2(
+    AT_DISPATCH_ALL_TYPES_AND2(
         at::ScalarType::Half,
         at::ScalarType::BFloat16,
         a.scalar_type(),

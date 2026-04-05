@@ -77,9 +77,7 @@ torch::Tensor SafeSoftmaxCuda(torch::Tensor a) {
 
     auto b = torch::empty_like(a);
 
-    AT_DISPATCH_FLOATING_TYPES_AND2(
-        at::ScalarType::Half,
-        at::ScalarType::BFloat16,
+    AT_DISPATCH_REDUCED_FLOATING_TYPES(
         a.scalar_type(),
         "SafeSoftmaxCuda",
         ([&] {

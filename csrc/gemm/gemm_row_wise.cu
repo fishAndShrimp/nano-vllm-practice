@@ -131,9 +131,7 @@ GemmRowWiseCuda(torch::Tensor a, torch::Tensor b) {
         a.options()
     );
 
-    AT_DISPATCH_FLOATING_TYPES_AND2(
-        at::ScalarType::Half,
-        at::ScalarType::BFloat16,
+    AT_DISPATCH_REDUCED_FLOATING_TYPES(
         a.scalar_type(),
         "GemmRowWiseCuda",
         ([&] {
