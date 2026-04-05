@@ -1,12 +1,13 @@
 import multiprocessing
 import os
+from pathlib import Path
 
 import torch
 from setuptools import find_packages, setup
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 
 # Get the absolute path of the current directory to locate source files
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = Path(__file__).resolve().parent
 
 
 # ------------------------------------------------------------------------
@@ -51,28 +52,25 @@ setup(
             # The binary will be compiled as a submodule: femtovllm._C
             name="femtovllm._C",
             sources=[
-                os.path.join(ROOT_DIR, "csrc", "bindings.cpp"),
-                os.path.join(ROOT_DIR, "csrc", "vec_add", "vec_add.cu"),
-                os.path.join(ROOT_DIR, "csrc", "relu", "relu.cu"),
-                os.path.join(ROOT_DIR, "csrc", "transpose", "transpose.cu"),
-                os.path.join(ROOT_DIR, "csrc", "reduce", "reduce.cu"),
-                os.path.join(ROOT_DIR, "csrc", "prefix_sum", "prefix_sum.cu"),
-                os.path.join(ROOT_DIR, "csrc", "softmax", "safe_softmax.cu"),
-                os.path.join(ROOT_DIR, "csrc", "softmax", "online_softmax.cu"),
-                os.path.join(ROOT_DIR, "csrc", "softmax", "batched_online_softmax.cu"),
-                os.path.join(ROOT_DIR, "csrc", "gemm", "gemm.cu"),
-                os.path.join(ROOT_DIR, "csrc", "gemm", "gemm_row_wise.cu"),
-                os.path.join(ROOT_DIR, "csrc", "flash_attention", "flash_attention.cu"),
-                os.path.join(
-                    ROOT_DIR, "csrc", "flash_attention", "flash_attention_coalesced.cu"
-                ),
-                os.path.join(
-                    ROOT_DIR, "csrc", "paged_attention", "paged_attention_gemm.cu"
-                ),
-                os.path.join(
-                    ROOT_DIR, "csrc", "paged_attention", "paged_attention_gemv.cu"
-                ),
-                # Future kernels (e.g., gemm.cu) will be added here
+                str(ROOT_DIR / "csrc" / x)
+                for x in [
+                    "bindings.cpp",
+                    "vec_add/vec_add.cu",
+                    "relu/relu.cu",
+                    "transpose/transpose.cu",
+                    "reduce/reduce.cu",
+                    "prefix_sum/prefix_sum.cu",
+                    "softmax/safe_softmax.cu",
+                    "softmax/online_softmax.cu",
+                    "softmax/batched_online_softmax.cu",
+                    "gemm/gemm.cu",
+                    "gemm/gemm_row_wise.cu",
+                    "flash_attention/flash_attention.cu",
+                    "flash_attention/flash_attention_coalesced.cu",
+                    "paged_attention/paged_attention_gemm.cu",
+                    "paged_attention/paged_attention_gemv.cu",
+                    # Future kernels (e.g., gemm.cu) will be added here
+                ]
             ],
             extra_compile_args={
                 "cxx": [
