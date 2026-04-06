@@ -8,16 +8,9 @@ namespace femtovllm {
 inline constexpr int kDimHead = 128;
 inline constexpr int kWarpSize = 32;
 
-// ============================================================================
-// Paged Attention GEMM (Prefill)
-// ============================================================================
-// In the GEMM kernel, computation is performed in 2D tiles
-// to maximize ALU utilization and shared memory reuse.
-// `kTileSize` dictates the dimension of these computation
-// tiles. A larger tile size (e.g., 64 or 128) generally
-// improves compute intensity but consumes more shared
-// memory per thread block.
-inline constexpr int kTileSize = 64;
+inline constexpr int kThreadsPerBlock = 256;
+inline constexpr int kWarpsPerBlock =
+    kThreadsPerBlock / kWarpSize;
 
 // ============================================================================
 // Paged Attention Memory Management (KV Cache)
@@ -33,23 +26,6 @@ inline constexpr int kTileSize = 64;
 // logical token indices to physical pages using this
 // constant.
 inline constexpr int kKVLenPerPage = 16;
-
-// To ensure efficient memory loading without complex
-// boundary checks within a single computation tile, the
-// tile size must perfectly span an integer number of
-// physical pages.
-static_assert(
-    kTileSize % kKVLenPerPage == 0,
-    "Architecture Error: kTileSize must be an exact "
-    "multiple of kKVLenPerPage "
-    "to ensure aligned memory access across physical pages."
-);
-inline constexpr int kNumPagesPerTile =
-    kTileSize / kKVLenPerPage;
-
-inline constexpr int kThreadsPerBlock = 256;
-inline constexpr int kWarpsPerBlock =
-    kThreadsPerBlock / kWarpSize;
 
 // ============================================================================
 // Paged Attention GEMV (Decode)

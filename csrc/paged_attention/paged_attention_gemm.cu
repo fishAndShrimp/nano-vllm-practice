@@ -6,10 +6,20 @@
 #include "../utils/cuda_check.cuh"
 
 using femtovllm::kDimHead;
-using femtovllm::kTileSize;
-
 using femtovllm::kKVLenPerPage;
-using femtovllm::kNumPagesPerTile;
+
+constexpr int kTileSize = 64;
+// To ensure efficient memory loading without complex
+// boundary checks within a single computation tile, the
+// tile size must perfectly span an integer number of
+// physical pages.
+static_assert(
+    kTileSize % kKVLenPerPage == 0,
+    "Architecture Error: kTileSize must be an exact "
+    "multiple of kKVLenPerPage "
+    "to ensure aligned memory access across physical pages."
+);
+constexpr int kNumPagesPerTile = kTileSize / kKVLenPerPage;
 
 template <typename scalar_t>
 __global__ void PagedAttentionGemmKernel(

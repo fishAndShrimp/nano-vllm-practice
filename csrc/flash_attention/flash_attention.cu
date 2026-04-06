@@ -6,7 +6,7 @@
 #include "../utils/cuda_check.cuh"
 
 using femtovllm::kDimHead;
-using femtovllm::kTileSize;
+constexpr int kTileSize = 64;
 
 template <typename scalar_t>
 __global__ void FlashAttentionKernel(
