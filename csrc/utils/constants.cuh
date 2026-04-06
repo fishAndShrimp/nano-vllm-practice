@@ -3,6 +3,12 @@
 namespace femtovllm {
 
 // ============================================================================
+// Global Constants
+// ============================================================================
+inline constexpr int kDimHead = 128;
+inline constexpr int kWarpSize = 32;
+
+// ============================================================================
 // Paged Attention GEMM (Prefill)
 // ============================================================================
 // In the GEMM kernel, computation is performed in 2D tiles
@@ -41,6 +47,10 @@ static_assert(
 inline constexpr int kNumPagesPerTile =
     kTileSize / kKVLenPerPage;
 
+inline constexpr int kThreadsPerBlock = 256;
+inline constexpr int kWarpsPerBlock =
+    kThreadsPerBlock / kWarpSize;
+
 // ============================================================================
 // Paged Attention GEMV (Decode)
 // ============================================================================
@@ -48,11 +58,26 @@ inline constexpr int kNumPagesPerTile =
 // decode kernel. Sequences longer than this will require
 // split-K reduction (to be implemented).
 inline constexpr int kMaxKVLenNonSplit = 8192;
-
-// ============================================================================
-// Global Constants
-// ============================================================================
-inline constexpr int kDimHead = 128;
-inline constexpr int kWarpSize = 32;
+static_assert(
+    kThreadsPerBlock > kDimHead,
+    "When GEMV, "
+    "kThreadsPerBlock must be greater than kDimHead to "
+    "ensure enough threads "
+    "are available to compute the accumulated V in "
+    "parallel without looping."
+);
+static_assert(
+    kThreadsPerBlock % kWarpSize == 0,
+    "When GEMV, "
+    "kThreadsPerBlock must be a multiple of kWarpSize (32) "
+    "to avoid partial warps."
+);
+static_assert(
+    kWarpsPerBlock <= kWarpSize,
+    "When GEMV, "
+    "kWarpsPerBlock cannot exceed kWarpSize (32) because "
+    "the final block reduction is performed by a single "
+    "warp."
+);
 
 }  // namespace femtovllm
