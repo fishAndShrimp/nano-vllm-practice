@@ -1,15 +1,21 @@
-
 # FlashAttention Benchmarks & Profiling / 基准测试与性能分析
 
-本目录用于自定义 FlashAttention CUDA 算子的性能评估、正确性测试以及底层硬件性能抓取。
+This directory contains scripts and results for performance evaluation, correctness testing, and low-level hardware profiling of our custom FlashAttention CUDA kernels.
+本目录用于自定义 FlashAttention CUDA 算子的性能评估、正确性验证以及底层硬件指标抓取。
 
 ---
 
-# 当前测试结果
+## 📊 Performance Results / 当前测试结果
 
-当seqlen较小时能有和SDPA接近的性能，当seqlen增大时由于未采用tensorcores性能差距开始变大。虽然重复运行了100次，但速度仍有波动，以下是三次benchmark.py的运行结果（run1和run2是经过挑选的较好的结果）。
+**Analysis / 性能分析:**
+At short sequence lengths, our pure SIMT implementation achieves performance comparable to PyTorch SDPA. However, as `seqlen` increases, the performance gap widens due to the absence of Tensor Core utilization in our current version.
+当序列长度（seqlen）较小时，本算子（纯 SIMT 实现）性能与 PyTorch SDPA 接近；随着 seqlen 增大，由于尚未引入 Tensor Cores 加速，与极致优化的基线相比性能差距逐渐显现。
 
-## RUN1
+**Note on Variance / 关于波动的说明:**
+GPU execution times are subject to system scheduling and clock scaling. The data below shows three independent runs of `benchmark.py` (averaged over 100 iterations per run). **Note that RUN 1 and RUN 2 are cherry-picked optimal results.**
+受系统调度与频率缩放影响，GPU 测速存在客观波动。以下为 `benchmark.py`（单次循环 100 遍取平均）的三次独立运行结果，**其中 RUN 1 与 RUN 2 为经过挑选的较优结果。**
+
+### RUN 1
 
 ![attention_benchmark_run1](./attention_benchmark_run1.png)
 | Seq_Len | Manual (ms) | femtovllm (Ours) (ms) | SDPA Math (ms) | xFormers (ms) | FlashAttention (ms) |
@@ -20,7 +26,7 @@
 | 128     | 0.2728      | 0.1140                | 0.2247         | 0.0166        | 0.0181              |
 | 256     | 0.0575      | 0.3764                | 0.2560         | 0.0225        | 0.0304              |
 
-## RUN2
+### RUN 2
 
 ![attention_benchmark_run2](./attention_benchmark_run2.png)
 | Seq_Len | Manual (ms) | femtovllm (Ours) (ms) | SDPA Math (ms) | xFormers (ms) | FlashAttention (ms) |
@@ -31,7 +37,7 @@
 | 128     | 0.2635      | 0.1287                | 0.6659         | 0.0518        | 0.0493              |
 | 256     | 0.2349      | 0.3420                | 0.3657         | 0.0225        | 0.0400              |
 
-## RUN3
+### RUN 3
 
 ![attention_benchmark_run3](./attention_benchmark_run3.png)
 | Seq_Len | Manual (ms) | femtovllm (Ours) (ms) | SDPA Math (ms) | xFormers (ms) | FlashAttention (ms) |
@@ -42,22 +48,27 @@
 | 128     | 0.0966      | 0.1398                | 0.3035         | 0.0153        | 0.0262              |
 | 256     | 0.1015      | 0.3918                | 0.2835         | 0.0308        | 0.0438              |
 
-## 测试环境搭建
+---
 
-搭建可能因平台不同而流程大不相同
+## 🛠️ Environment Setup / 测试环境搭建
 
-作者的测试和分析是在windows和wsl2下运行的，同时在wsl2和windows侧都安装了nsys和ncu
+Profiling workflows vary significantly across platforms. The following setup is based on **Windows 11 + WSL2**.
+性能分析工具的配置因系统而异。以下经验基于 **Windows 11 + WSL2** 环境：
 
-nsys和ncu可以从
-https://developer.nvidia.com/tools-overview
-下载
+1. **Tool Installation / 工具安装:**
+   Download Nsight Systems (`nsys`) and Nsight Compute (`ncu`) from [NVIDIA Developer Tools](https://developer.nvidia.com/tools-overview). It is required to install them on **both** the Windows host and inside WSL2.
+   请前往 NVIDIA 官网下载并安装 `nsys` 和 `ncu`。建议在 Windows 宿主机与 WSL2 内部**双端均进行安装**。
 
-wsl2内部做profile也需要在windows侧让所有用户能访问gpu性能计数器什么的
+2. **WSL2 Permissions / WSL2 权限配置 (Critical):**
+   To profile inside WSL2, you must grant GPU counter access on the Windows host. Open the **NVIDIA Control Panel** -> **Developer** -> **Manage GPU Performance Counters**, and select **"Allow access to the GPU performance counters to all users"**.
+   在 WSL2 内部执行 Profiling 前，必须在 Windows 宿主机的 **NVIDIA 控制面板** -> **开发者** -> **管理 GPU 性能计数器** 中，勾选 **“允许所有用户访问 GPU 性能计数器”**，否则 `ncu` 会因权限不足报错。
 
+---
 
-## Profiling Commands / 性能抓取命令速查
+## 🚀 Profiling Commands / 性能抓取命令速查
 
-请在**当前目录**下执行以下命令，生成的分析报告将统一保存在 `reports/` 子文件夹中。该文件夹需要预先创建好
+Execute the following commands in the **current directory**. Profiling reports will be saved in the `reports/` subdirectory (ensure this directory exists).
+请在**当前目录**下执行以下命令，生成的分析报告将统一保存在 `reports/` 子文件夹中（需预先创建）。
 
 ### Nsight Systems (`nsys`) - Macro Timeline / 宏观时间线
 Profiles CPU-GPU interactions and kernel launch overheads.
