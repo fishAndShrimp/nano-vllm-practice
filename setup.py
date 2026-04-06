@@ -67,7 +67,8 @@ setup(
                     # "gemm/gemm_row_wise.cu",
                     # "flash_attention/flash_attention.cu",
                     # "flash_attention/flash_attention_coalesced.cu",
-                    # "paged_attention/paged_attention_gemm.cu",
+                    "flash_attention/flash_attention_warp.cu",
+                    "paged_attention/paged_attention_gemm.cu",
                     "paged_attention/paged_attention_gemv.cu",
                     # Future kernels (e.g., gemm.cu) will be added here
                 ]

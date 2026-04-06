@@ -285,3 +285,75 @@ def gen_right_bottom_mask(q_len, kv_len):
 
 ---
 
+## receive warp reduce
+
+```cpp
+// ❌
+femtovllm::WarpAllReduceSum(score);
+
+// ✅
+score = femtovllm::WarpAllReduceSum(score);
+```
+
+---
+
+## Make sure when `col < kv_len`, score must be -INF
+
+```cpp
+//////////////////
+// HERE sw is hardcoded for kKVTileSize=64
+//////////////////
+float sw[2] = {-INFINITY, -INFINITY};
+for (int kt_col = 0; kt_col < kKVTileSize;
+        kt_col++) {
+    if (tile_idx * kKVTileSize + kt_col >=
+        kv_len) {
+        break;
+    }
+
+......
+
+}
+```
+
+---
+
+## When float4 load, shared from 2d to 1d, the stride includes padding
+
+```cpp
+// ❌
+auto smem_pos = row * (kPacksPerHead) + col;
+
+// ✅
+auto smem_pos = row * (kPacksPerHead + 1) + col;
+
+//////////////////
+//   (kDimHead + kPackSize)
+//             / kPackSize
+// = (kPacksPerHead + 1)
+//////////////////
+```
+
+---
+
+## Sometimes kThreadsPerBlock > kQTileSize * kPacksPerHead
+
+When we flatten blocks to load data, note that threads in one block could be more than shared array size.
+
+```cpp
+for (int phase = 0; phase * kThreadsPerBlock <
+                    kQTileSize * kPacksPerHead;
+        phase++) {
+    auto flat = phase * kThreadsPerBlock + tid;
+    if (flat >= kQTileSize * kPacksPerHead) {
+        break;
+    }
+
+    ...
+}
+```
+
+---
+
+
+

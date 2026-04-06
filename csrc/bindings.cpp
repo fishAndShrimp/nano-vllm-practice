@@ -32,17 +32,22 @@ torch::Tensor GemmCuda(torch::Tensor a, torch::Tensor b);
 //     torch::Tensor k,
 //     torch::Tensor v
 // );
+torch::Tensor FlashAttentionWarpCuda(
+    torch::Tensor q,
+    torch::Tensor k,
+    torch::Tensor v
+);
 
-// torch::Tensor PagedAttentionGemmCuda(
-//     torch::Tensor q,
-//     torch::Tensor k_pool,
-//     torch::Tensor v_pool,
-//     torch::Tensor cu_seqlens,
-//     int max_q_len,
-//     torch::Tensor kv_page_tables,
-//     torch::Tensor kv_lens,
-//     torch::Tensor positions
-// );
+torch::Tensor PagedAttentionGemmCuda(
+    torch::Tensor q,
+    torch::Tensor k_pool,
+    torch::Tensor v_pool,
+    torch::Tensor cu_seqlens,
+    int max_q_len,
+    torch::Tensor kv_page_tables,
+    torch::Tensor kv_lens,
+    torch::Tensor positions
+);
 
 torch::Tensor PagedAttentionGemvCuda(
     torch::Tensor q,
@@ -57,7 +62,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("kMaxKVLenNonSplit") =
         femtovllm::kMaxKVLenNonSplit;
 
-    m.attr("kTileSize") = femtovllm::kTileSize;
     m.attr("kKVLenPerPage") = femtovllm::kKVLenPerPage;
     m.attr("kDimHead") = femtovllm::kDimHead;
 
@@ -79,10 +83,14 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         //     "FlashAttentionCoalescedCuda",
         //     &FlashAttentionCoalescedCuda
         // )
-        // .def(
-        //     "PagedAttentionGemmCuda",
-        //     &PagedAttentionGemmCuda
-        // )
+        .def(
+            "FlashAttentionWarpCuda",
+            &FlashAttentionWarpCuda
+        )
+        .def(
+            "PagedAttentionGemmCuda",
+            &PagedAttentionGemmCuda
+        )
         .def(
             "PagedAttentionGemvCuda",
             &PagedAttentionGemvCuda
