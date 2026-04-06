@@ -7,18 +7,15 @@
 #include "../utils/warp_utils.cuh"
 
 using femtovllm::kDimHead;
+using femtovllm::kWarpSize;
 
 using femtovllm::kThreadsPerBlock;
-using femtovllm::kWarpSize;
 using femtovllm::kWarpsPerBlock;
 
-constexpr int kDimPerThread = kDimHead / kWarpSize;
+using femtovllm::kDimPerThread;
 
-constexpr int kQTileSize = 32;
-static_assert(kQTileSize % kWarpsPerBlock == 0);
-
-constexpr int kKVTileSize = 32;
-static_assert(kKVTileSize % kWarpsPerBlock == 0);
+using femtovllm::kKVTileSize;
+using femtovllm::kQTileSize;
 
 template <typename scalar_t>
 __global__ void FlashAttentionWarpKernel(

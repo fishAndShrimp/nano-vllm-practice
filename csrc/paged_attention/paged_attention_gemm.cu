@@ -19,7 +19,7 @@ static_assert(
     "multiple of kKVLenPerPage "
     "to ensure aligned memory access across physical pages."
 );
-constexpr int kNumPagesPerTile = kTileSize / kKVLenPerPage;
+constexpr int kPagesPerTile = kTileSize / kKVLenPerPage;
 
 template <typename scalar_t>
 __global__ void PagedAttentionGemmKernel(
@@ -120,7 +120,7 @@ __global__ void PagedAttentionGemmKernel(
             for (int col = 0; col < kTileSize; col++) {
                 auto row = threadIdx.x;
                 auto page_idx = page_table
-                    [tile_idx * kNumPagesPerTile +
+                    [tile_idx * kPagesPerTile +
                      col / kKVLenPerPage];
 
                 if ((kTileSize * phase + row) < dim_d &&
@@ -224,7 +224,7 @@ __global__ void PagedAttentionGemmKernel(
             for (int row = 0; row < kTileSize; row++) {
                 auto col = threadIdx.x;
                 auto page_idx = page_table
-                    [tile_idx * kNumPagesPerTile +
+                    [tile_idx * kPagesPerTile +
                      row / kKVLenPerPage];
 
                 if ((kTileSize * tile_idx + row) < kv_len &&

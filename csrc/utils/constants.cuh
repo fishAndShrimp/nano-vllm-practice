@@ -13,19 +13,22 @@ inline constexpr int kWarpsPerBlock =
     kThreadsPerBlock / kWarpSize;
 
 // ============================================================================
-// Paged Attention Memory Management (KV Cache)
+// Flash Attention V1
+// Paged Attention GEMM (Prefill)
 // ============================================================================
-// `kKVLenPerPage` defines the physical block size (number
-// of tokens per page) managed by the KV Cache Manager. A
-// smaller page size (e.g., 16) significantly reduces
-// internal memory fragmentation, allowing for higher batch
-// sizes and better VRAM utilization.
-//
-// Both GEMM (Prefill) and GEMV (Decode) kernels are fully
-// decoupled from this physical layout and dynamically map
-// logical token indices to physical pages using this
-// constant.
-inline constexpr int kKVLenPerPage = 16;
+inline constexpr int kDimPerThread = kDimHead / kWarpSize;
+
+inline constexpr int kQTileSize = 32;
+static_assert(
+    kQTileSize % kWarpsPerBlock == 0,
+    "kQTileSize must be a multiple of kWarpsPerBlock"
+);
+
+inline constexpr int kKVTileSize = 32;
+static_assert(
+    kKVTileSize % kWarpsPerBlock == 0,
+    "kKVTileSize must be a multiple of kWarpsPerBlock"
+);
 
 // ============================================================================
 // Paged Attention GEMV (Decode)
@@ -55,5 +58,20 @@ static_assert(
     "the final block reduction is performed by a single "
     "warp."
 );
+
+// ============================================================================
+// Paged Attention Memory Management (KV Cache)
+// ============================================================================
+// `kKVLenPerPage` defines the physical block size (number
+// of tokens per page) managed by the KV Cache Manager. A
+// smaller page size (e.g., 16) significantly reduces
+// internal memory fragmentation, allowing for higher batch
+// sizes and better VRAM utilization.
+//
+// Both GEMM (Prefill) and GEMV (Decode) kernels are fully
+// decoupled from this physical layout and dynamically map
+// logical token indices to physical pages using this
+// constant.
+inline constexpr int kKVLenPerPage = 16;
 
 }  // namespace femtovllm

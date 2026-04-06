@@ -10,26 +10,8 @@ using femtovllm::kDimHead;
 using femtovllm::kKVLenPerPage;
 using femtovllm::kWarpSize;
 
-constexpr int kThreadsPerBlock = 256;
-static_assert(
-    kThreadsPerBlock > kDimHead,
-    "kThreadsPerBlock must be greater than kDimHead to "
-    "ensure enough threads "
-    "are available to compute the accumulated V in "
-    "parallel without looping."
-);
-static_assert(
-    kThreadsPerBlock % kWarpSize == 0,
-    "kThreadsPerBlock must be a multiple of kWarpSize (32) "
-    "to avoid partial warps."
-);
-constexpr int kWarpsPerBlock = kThreadsPerBlock / kWarpSize;
-static_assert(
-    kWarpsPerBlock <= kWarpSize,
-    "kWarpsPerBlock cannot exceed kWarpSize (32) because "
-    "the final block reduction is performed by a single "
-    "warp."
-);
+using femtovllm::kThreadsPerBlock;
+using femtovllm::kWarpsPerBlock;
 
 template <typename scalar_t>
 __global__ void PagedAttentionGemvKernel(
