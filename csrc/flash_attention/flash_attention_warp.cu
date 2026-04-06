@@ -14,9 +14,11 @@ using femtovllm::kWarpsPerBlock;
 
 constexpr int kDimPerThread = kDimHead / kWarpSize;
 
-constexpr int kQTileSize = 16;
+constexpr int kQTileSize = 32;
 static_assert(kQTileSize % kWarpsPerBlock == 0);
-constexpr int kKVTileSize = 64;
+
+constexpr int kKVTileSize = 32;
+static_assert(kKVTileSize % kWarpsPerBlock == 0);
 
 template <typename scalar_t>
 __global__ void FlashAttentionWarpKernel(
@@ -150,7 +152,8 @@ __global__ void FlashAttentionWarpKernel(
             }
 
             //////////////////
-            // HERE sw is hardcoded for kKVTileSize=64
+            // HERE sw[2] is hardcoded for
+            // kKVTileSize <= 64
             //////////////////
             float sw[2] = {-INFINITY, -INFINITY};
             for (int kt_col = 0; kt_col < kKVTileSize;
@@ -203,7 +206,8 @@ __global__ void FlashAttentionWarpKernel(
             sum_sub = femtovllm::WarpAllReduceSum(sum_sub);
             sum_softmax += sum_sub;
             //////////////////
-            // HERE sw is hardcoded for kKVTileSize=64
+            // HERE sw[2] is hardcoded for
+            // kKVTileSize <= 64
             //////////////////
 
             // ensure v
