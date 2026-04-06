@@ -30,6 +30,12 @@ __global__ void FlashAttentionWarpKernel(
     int q_len,
     int kv_len
 ) {
+    constexpr int kPackSize =
+        sizeof(float4) / sizeof(scalar_t);
+    static_assert(kDimHead % kPackSize == 0);
+    constexpr int kPacksPerHead = kDimHead / kPackSize;
+    const float scale_softmax = 1.0 / sqrt(kDimHead);
+
     auto batch_idx = blockIdx.y;
     auto head_idx = blockIdx.z;
     auto kv_head_idx = head_idx / n_rep;
@@ -50,29 +56,38 @@ __global__ void FlashAttentionWarpKernel(
         v_batched + (batch_idx * dim_h_kv + kv_head_idx) *
                         kv_len * kDimHead;
 
-    __shared__ scalar_t q_s[kQTileSize][kDimHead + 1];
-    __shared__ scalar_t k_s[kKVTileSize][kDimHead + 1];
-    __shared__ scalar_t v_s[kKVTileSize][kDimHead + 1];
+    __shared__ scalar_t
+        q_s[kQTileSize][kDimHead + kPackSize];
+    __shared__ scalar_t
+        k_s[kKVTileSize][kDimHead + kPackSize];
+    __shared__ scalar_t
+        v_s[kKVTileSize][kDimHead + kPackSize];
 
     auto lx = threadIdx.x;
     auto ly = threadIdx.y;
     auto tid = threadIdx.y * kWarpSize + lx;
     auto q_row_base = blockIdx.x * kQTileSize;
 
-    float scale_softmax = 1.0 / sqrt(kDimHead);
-
-    for (int phase = 0;
-         phase * kThreadsPerBlock < kQTileSize * kDimHead;
+    auto q_s_vec = reinterpret_cast<float4*>(q_s);
+    auto q_vec = reinterpret_cast<const float4*>(q);
+    for (int phase = 0; phase * kThreadsPerBlock <
+                        kQTileSize * kPacksPerHead;
          phase++) {
         auto flat = phase * kThreadsPerBlock + tid;
-        auto col = flat % kDimHead;
-        auto row = flat / kDimHead;
+        auto col = flat % kPacksPerHead;
+        auto row = flat / kPacksPerHead;
 
+        //////////////////
+        //   (kDimHead + kPackSize)
+        //             / kPackSize
+        // = (kPacksPerHead + 1)
+        //////////////////
         if ((q_row_base + row) < q_len) {
-            q_s[row][col] =
-                q[(q_row_base + row) * kDimHead + col];
+            q_s_vec[row * (kPacksPerHead + 1) + col] = q_vec
+                [(q_row_base + row) * kPacksPerHead + col];
         } else {
-            q_s[row][col] = static_cast<scalar_t>(0);
+            q_s_vec[row * (kPacksPerHead + 1) + col] =
+                make_float4(0.0, 0.0, 0.0, 0.0);
         }
     }
     __syncthreads();
@@ -111,20 +126,26 @@ __global__ void FlashAttentionWarpKernel(
             //////////////////
             // load k tile
             //////////////////
+            auto k_s_vec = reinterpret_cast<float4*>(k_s);
+            auto k_vec = reinterpret_cast<const float4*>(k);
             for (int phase = 0; phase * kThreadsPerBlock <
-                                kKVTileSize * kDimHead;
+                                kKVTileSize * kPacksPerHead;
                  phase++) {
                 auto flat = phase * kThreadsPerBlock + tid;
-                auto col = flat % kDimHead;
-                auto row = flat / kDimHead;
+                auto col = flat % kPacksPerHead;
+                auto row = flat / kPacksPerHead;
 
                 if ((kv_row_base + row) < kv_len) {
-                    k_s[row][col] =
-                        k[(kv_row_base + row) * kDimHead +
-                          col];
+                    k_s_vec
+                        [row * (kPacksPerHead + 1) + col] =
+                            k_vec
+                                [(kv_row_base + row) *
+                                     kPacksPerHead +
+                                 col];
                 } else {
-                    k_s[row][col] =
-                        static_cast<scalar_t>(0);
+                    k_s_vec
+                        [row * (kPacksPerHead + 1) + col] =
+                            make_float4(0.0, 0.0, 0.0, 0.0);
                 }
             }
             // ensure k only
@@ -134,20 +155,26 @@ __global__ void FlashAttentionWarpKernel(
             //////////////////
             // load v tile
             //////////////////
+            auto v_s_vec = reinterpret_cast<float4*>(v_s);
+            auto v_vec = reinterpret_cast<const float4*>(v);
             for (int phase = 0; phase * kThreadsPerBlock <
-                                kKVTileSize * kDimHead;
+                                kKVTileSize * kPacksPerHead;
                  phase++) {
                 auto flat = phase * kThreadsPerBlock + tid;
-                auto col = flat % kDimHead;
-                auto row = flat / kDimHead;
+                auto col = flat % kPacksPerHead;
+                auto row = flat / kPacksPerHead;
 
                 if ((kv_row_base + row) < kv_len) {
-                    v_s[row][col] =
-                        v[(kv_row_base + row) * kDimHead +
-                          col];
+                    v_s_vec
+                        [row * (kPacksPerHead + 1) + col] =
+                            v_vec
+                                [(kv_row_base + row) *
+                                     kPacksPerHead +
+                                 col];
                 } else {
-                    v_s[row][col] =
-                        static_cast<scalar_t>(0);
+                    v_s_vec
+                        [row * (kPacksPerHead + 1) + col] =
+                            make_float4(0.0, 0.0, 0.0, 0.0);
                 }
             }
 
@@ -266,6 +293,21 @@ torch::Tensor FlashAttentionWarpCuda(
     TORCH_CHECK_EQ(q.is_contiguous(), true);
     TORCH_CHECK_EQ(k.is_contiguous(), true);
     TORCH_CHECK_EQ(v.is_contiguous(), true);
+    TORCH_CHECK_EQ(
+        reinterpret_cast<uintptr_t>(q.data_ptr()) %
+            sizeof(float4),
+        0
+    );
+    TORCH_CHECK_EQ(
+        reinterpret_cast<uintptr_t>(k.data_ptr()) %
+            sizeof(float4),
+        0
+    );
+    TORCH_CHECK_EQ(
+        reinterpret_cast<uintptr_t>(v.data_ptr()) %
+            sizeof(float4),
+        0
+    );
 
     TORCH_CHECK_EQ(q.dim(), 4);
     TORCH_CHECK_EQ(k.dim(), 4);
