@@ -1,8 +1,10 @@
-name: nanovllm
+name: femtovllm
+
 channels:
   - conda-forge
   - nvidia
   - defaults
+
 dependencies:
   - python=3.10
   - jupyter
