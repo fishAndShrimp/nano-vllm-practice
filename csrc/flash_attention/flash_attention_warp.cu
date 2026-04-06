@@ -74,8 +74,13 @@ __global__ void FlashAttentionWarpKernel(
                         kQTileSize * kPacksPerHead;
          phase++) {
         auto flat = phase * kThreadsPerBlock + tid;
+        if (flat >= kQTileSize * kPacksPerHead) {
+            break;
+        }
+
         auto col = flat % kPacksPerHead;
         auto row = flat / kPacksPerHead;
+        auto smem_pos = row * (kPacksPerHead + 1) + col;
 
         //////////////////
         //   (kDimHead + kPackSize)
@@ -83,10 +88,12 @@ __global__ void FlashAttentionWarpKernel(
         // = (kPacksPerHead + 1)
         //////////////////
         if ((q_row_base + row) < q_len) {
-            q_s_vec[row * (kPacksPerHead + 1) + col] = q_vec
-                [(q_row_base + row) * kPacksPerHead + col];
+            auto gmem_pos =
+                (q_row_base + row) * kPacksPerHead + col;
+
+            q_s_vec[smem_pos] = q_vec[gmem_pos];
         } else {
-            q_s_vec[row * (kPacksPerHead + 1) + col] =
+            q_s_vec[smem_pos] =
                 make_float4(0.0, 0.0, 0.0, 0.0);
         }
     }
@@ -132,24 +139,32 @@ __global__ void FlashAttentionWarpKernel(
                                 kKVTileSize * kPacksPerHead;
                  phase++) {
                 auto flat = phase * kThreadsPerBlock + tid;
+                if (flat >= kKVTileSize * kPacksPerHead) {
+                    break;
+                }
+
                 auto col = flat % kPacksPerHead;
                 auto row = flat / kPacksPerHead;
+                auto smem_pos =
+                    row * (kPacksPerHead + 1) + col;
 
                 if ((kv_row_base + row) < kv_len) {
-                    k_s_vec
-                        [row * (kPacksPerHead + 1) + col] =
-                            k_vec
-                                [(kv_row_base + row) *
-                                     kPacksPerHead +
-                                 col];
+                    auto gmem_pos = (kv_row_base + row) *
+                                        kPacksPerHead +
+                                    col;
+
+                    k_s_vec[smem_pos] = k_vec[gmem_pos];
                 } else {
-                    k_s_vec
-                        [row * (kPacksPerHead + 1) + col] =
-                            make_float4(0.0, 0.0, 0.0, 0.0);
+                    k_s_vec[smem_pos] =
+                        make_float4(0.0, 0.0, 0.0, 0.0);
                 }
             }
-            // ensure k only
-            // next step needs k only
+
+            //////////////////
+            // [ CRITICAL BOUND ]
+            // - ensure k_s, next step q@k.T needs k
+            // - avoid overwriting v_s
+            //////////////////
             __syncthreads();
 
             //////////////////
@@ -161,20 +176,24 @@ __global__ void FlashAttentionWarpKernel(
                                 kKVTileSize * kPacksPerHead;
                  phase++) {
                 auto flat = phase * kThreadsPerBlock + tid;
+                if (flat >= kKVTileSize * kPacksPerHead) {
+                    break;
+                }
+
                 auto col = flat % kPacksPerHead;
                 auto row = flat / kPacksPerHead;
+                auto smem_pos =
+                    row * (kPacksPerHead + 1) + col;
 
                 if ((kv_row_base + row) < kv_len) {
-                    v_s_vec
-                        [row * (kPacksPerHead + 1) + col] =
-                            v_vec
-                                [(kv_row_base + row) *
-                                     kPacksPerHead +
-                                 col];
+                    auto gmem_pos = (kv_row_base + row) *
+                                        kPacksPerHead +
+                                    col;
+
+                    v_s_vec[smem_pos] = v_vec[gmem_pos];
                 } else {
-                    v_s_vec
-                        [row * (kPacksPerHead + 1) + col] =
-                            make_float4(0.0, 0.0, 0.0, 0.0);
+                    v_s_vec[smem_pos] =
+                        make_float4(0.0, 0.0, 0.0, 0.0);
                 }
             }
 
