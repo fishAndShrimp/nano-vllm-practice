@@ -60,3 +60,19 @@ weights/
 # Local Practice & Temp Files
 # ==============================
 _TEMPPRAC_*
+
+# ==============================
+# Profiling: Nsight Systems & Compute
+# ==============================
+# Global ignore for profiling artifacts (prevents accidental root commits)
+*.nsys-rep
+*.ncu-rep
+*.sqlite
+
+# Ignore all contents in any 'reports' dir, but keep README placeholders
+**/reports/*
+!**/reports/README.md
+
+# Ignore downloaded tool installers
+downloads/
+
