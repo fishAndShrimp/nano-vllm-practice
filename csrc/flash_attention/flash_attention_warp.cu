@@ -14,7 +14,7 @@ using femtovllm::kWarpsPerBlock;
 
 constexpr int kDimPerThread = kDimHead / kWarpSize;
 
-constexpr int kQTileSize = 8;
+constexpr int kQTileSize = 16;
 static_assert(kQTileSize % kWarpsPerBlock == 0);
 constexpr int kKVTileSize = 64;
 
@@ -75,16 +75,23 @@ __global__ void FlashAttentionWarpKernel(
     }
     __syncthreads();
 
-    float hidden[kDimPerThread];
-#pragma unroll
-    for (int i = 0; i < kDimPerThread; i++) {
-        hidden[i] = 0.0;
-    }
-
-    scalar_t q_w[kDimPerThread];
     for (int coarse = 0;
          coarse * kWarpsPerBlock < kQTileSize;
          coarse++) {
+        //////////////////
+        // coarse in q
+        //////////////////
+
+        //////////////////
+        // init state per thread for this q tile
+        //////////////////
+        float hidden[kDimPerThread];
+#pragma unroll
+        for (int i = 0; i < kDimPerThread; i++) {
+            hidden[i] = 0.0;
+        }
+
+        scalar_t q_w[kDimPerThread];
 #pragma unroll
         for (int i = 0; i < kDimPerThread; i++) {
             q_w[i] = q_s[coarse * kWarpsPerBlock + ly]
@@ -145,9 +152,14 @@ __global__ void FlashAttentionWarpKernel(
             //////////////////
             // HERE sw is hardcoded for kKVTileSize=64
             //////////////////
-            float sw[2];
+            float sw[2] = {-INFINITY, -INFINITY};
             for (int kt_col = 0; kt_col < kKVTileSize;
                  kt_col++) {
+                if (tile_idx * kKVTileSize + kt_col >=
+                    kv_len) {
+                    break;
+                }
+
                 float score = 0.0;
 
 #pragma unroll
@@ -159,7 +171,7 @@ __global__ void FlashAttentionWarpKernel(
                         k_s[kt_col][i * kWarpSize + lx];
                 }
 
-                femtovllm::WarpAllReduceSum(score);
+                score = femtovllm::WarpAllReduceSum(score);
 
                 score *= scale_softmax;
                 if (kt_col == lx) {
@@ -170,7 +182,7 @@ __global__ void FlashAttentionWarpKernel(
             }
 
             auto m_sub = fmaxf(sw[0], sw[1]);
-            femtovllm::WarpAllReduceMax(m_sub);
+            m_sub = femtovllm::WarpAllReduceMax(m_sub);
 
             if (m_softmax < m_sub) {
                 auto exp_delta = expf(m_softmax - m_sub);
@@ -188,7 +200,7 @@ __global__ void FlashAttentionWarpKernel(
             sw[1] = expf(sw[1] - m_softmax);
             auto sum_sub = sw[0] + sw[1];
 
-            femtovllm::WarpAllReduceSum(sum_sub);
+            sum_sub = femtovllm::WarpAllReduceSum(sum_sub);
             sum_softmax += sum_sub;
             //////////////////
             // HERE sw is hardcoded for kKVTileSize=64
@@ -205,7 +217,7 @@ __global__ void FlashAttentionWarpKernel(
                     weight = sw[1];
                 }
 
-                __shfl_sync(
+                weight = __shfl_sync(
                     femtovllm::kWarpMaskFull,
                     weight,
                     v_row % kWarpSize
@@ -220,15 +232,22 @@ __global__ void FlashAttentionWarpKernel(
             }
         }
 
+        {
+            auto q_coarse = (coarse * kWarpsPerBlock + ly);
+
+            if ((q_row_base + q_coarse) < q_len) {
 #pragma unroll
-        for (int i = 0; i < kDimPerThread; i++) {
-            if ((coarse * kWarpsPerBlock + ly) < q_len) {
-                out[(coarse * kWarpsPerBlock + ly) *
-                        kDimHead +
-                    (i * kWarpSize + lx)] =
-                    hidden[i] / sum_softmax;
+                for (int i = 0; i < kDimPerThread; i++) {
+                    out[(q_row_base + q_coarse) * kDimHead +
+                        (i * kWarpSize + lx)] =
+                        hidden[i] / sum_softmax;
+                }
             }
         }
+
+        //////////////////
+        // coarse in q
+        //////////////////
     }
 }
 
@@ -275,8 +294,7 @@ torch::Tensor FlashAttentionWarpCuda(
         ([&] {
             FlashAttentionWarpKernel<<<
                 dim3(
-                    (q_len + kWarpsPerBlock - 1) /
-                        kWarpsPerBlock,
+                    (q_len + kQTileSize - 1) / kQTileSize,
                     dim_b,
                     dim_h
                 ),
