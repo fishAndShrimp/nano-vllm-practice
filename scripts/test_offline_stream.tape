@@ -10,7 +10,7 @@
 # =====================================================================
 
 # Output destination (relative to project root)
-Output assets/test_offline_stream.gif
+Output assets/test_offline_stream_v3.gif
 
 # Terminal aesthetics: Optimized for Rich Columns layout
 Set Margin 20
@@ -38,7 +38,7 @@ Sleep 8s
 Show
 
 # Observation window for the Rich Live streaming output
-Sleep 15s
+Sleep 10s
 
 # Graceful pause before the GIF loops
 Sleep 2s
