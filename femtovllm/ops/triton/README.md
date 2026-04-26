@@ -46,3 +46,39 @@ def my_kernel(..., debug_ptr):
     # (Or use make_block_ptr with pid offset / 或在 make_block_ptr 中加入 pid 偏移)
     tl.store(debug_ptr + offset_base + offsets, a_block)
 ```
+
+
+# Common Kernel Coding Pitfalls / 其他 Kernel 编写踩坑记录
+
+## 1. Downcast for `tl.dot` Instead of Upcasting / `tl.dot` 计算时向下转型而非向上转型
+To leverage Tensor Cores efficiently, cast FP32 weights down to FP16/BF16 before `tl.dot`, rather than casting the value block up to FP32. The accumulator remains FP32.
+为了高效利用 Tensor Core，在执行 `tl.dot` 前需将 FP32 的权重向下转型（Downcast）为 FP16/BF16，而不是将 Value 块向上转型为 FP32。累加器保持 FP32 精度。
+
+```python
+            v_block = tl.load(v_block_ptr, boundary_check=(0, 1), padding_option="zero")
+            sw_cast = tl.cast(sw, dtype) # Downcast to match Tensor Core MMA requirements
+            attn += tl.dot(sw_cast, v_block)
+```
+
+## 2. Retain Tensor Shapes with `keep_dims` / 使用 `keep_dims` 维持张量形状以防广播错误
+Always use `keep_dims=True` during reductions (like `tl.max` or `tl.sum`) to prevent dimension collapse, which causes silent broadcasting failures in subsequent operations.
+在执行归约操作（如 `tl.max` 或 `tl.sum`）时，务必使用 `keep_dims=True` 防止维度坍塌，否则会导致后续计算发生隐式的广播（Broadcasting）错误。
+
+```python
+            m_new = tl.max(sw, 1, keep_dims=True)
+```
+```python
+            sum_softmax += tl.sum(sw, 1, keep_dims=True)
+```
+
+## 3. Zero-Padding is Mandatory for OOB Memory / 越界内存必须强制补零
+Even if out-of-bounds (OOB) elements are logically masked out or multiplied by zero later (e.g., when the corresponding elements in `q_block` are set to `0.0`), you must use `padding_option="zero"` during `tl.load`. Uninitialized SRAM garbage data will corrupt MMA (Matrix-Multiply-Accumulate) hardware instructions.
+即使越界部分在逻辑上会被 Mask 屏蔽或乘以 0（例如对应的 `q_block` 元素被设置为 `0.0`），在 `tl.load` 时也必须使用 `padding_option="zero"`。否则，SRAM 中未初始化的脏数据会直接破坏 Tensor Core 的 MMA（矩阵乘加）指令计算。
+
+```python
+            k_block = tl.load(k_block_ptr, boundary_check=(0, 1), padding_option="zero")
+```
+```python
+            v_block = tl.load(v_block_ptr, boundary_check=(0, 1), padding_option="zero")
+```
+

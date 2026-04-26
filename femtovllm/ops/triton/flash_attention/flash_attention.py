@@ -145,9 +145,6 @@ def flash_attention_triton(
     assert n_heads % n_kv_heads == 0
     n_rep = n_heads // n_kv_heads
 
-    print(f"{q_len=}")
-    print(f"{dim_d=}")
-
     out = torch.empty_like(q)
     flash_attention_kernel[
         (
