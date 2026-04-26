@@ -2,10 +2,6 @@ import torch
 import triton
 import triton.language as tl
 
-Q_TILE_SIZE: tl.constexpr = 32
-KV_TILE_SIZE: tl.constexpr = 64
-DIM_HEAD: tl.constexpr = 128
-
 
 @triton.jit
 def flash_attention_kernel(
@@ -17,9 +13,12 @@ def flash_attention_kernel(
     n_kv_heads,
     q_len,
     kv_len,
-    dim_d,
     n_rep,
+    scale_softmax,
     dtype: tl.constexpr,
+    Q_TILE_SIZE: tl.constexpr,
+    KV_TILE_SIZE: tl.constexpr,
+    DIM_HEAD: tl.constexpr,
 ):
     """ """
     batch = tl.program_id(2)
@@ -27,24 +26,24 @@ def flash_attention_kernel(
     head = tl.program_id(1)
     kv_head = head // n_rep
 
-    q_ptr = q_ptr_batched + (batch * n_heads + head) * q_len * dim_d
-    k_ptr = k_ptr_batched + (batch * n_kv_heads + kv_head) * kv_len * dim_d
-    v_ptr = v_ptr_batched + (batch * n_kv_heads + kv_head) * kv_len * dim_d
-    out_ptr = out_ptr_batched + (batch * n_heads + head) * q_len * dim_d
+    q_ptr = q_ptr_batched + (batch * n_heads + head) * q_len * DIM_HEAD
+    k_ptr = k_ptr_batched + (batch * n_kv_heads + kv_head) * kv_len * DIM_HEAD
+    v_ptr = v_ptr_batched + (batch * n_kv_heads + kv_head) * kv_len * DIM_HEAD
+    out_ptr = out_ptr_batched + (batch * n_heads + head) * q_len * DIM_HEAD
 
     q_tile_idx = tl.program_id(0)
     q_block_ptr = tl.make_block_ptr(
         base=q_ptr,
-        shape=(q_len, dim_d),
-        strides=(dim_d, 1),
+        shape=(q_len, DIM_HEAD),
+        strides=(DIM_HEAD, 1),
         offsets=(q_tile_idx * Q_TILE_SIZE, 0),
         block_shape=(Q_TILE_SIZE, DIM_HEAD),
         order=(1, 0),
     )
     out_block_ptr = tl.make_block_ptr(
         base=out_ptr,
-        shape=(q_len, dim_d),
-        strides=(dim_d, 1),
+        shape=(q_len, DIM_HEAD),
+        strides=(DIM_HEAD, 1),
         offsets=(q_tile_idx * Q_TILE_SIZE, 0),
         block_shape=(Q_TILE_SIZE, DIM_HEAD),
         order=(1, 0),
@@ -62,21 +61,21 @@ def flash_attention_kernel(
 
         k_block_ptr = tl.make_block_ptr(
             base=k_ptr,
-            # shape=(kv_len, dim_d),
-            # strides=(dim_d, 1),
+            # shape=(kv_len, DIM_HEAD),
+            # strides=(DIM_HEAD, 1),
             # offsets=(kv_tile_idx * KV_TILE_SIZE, 0),
-            # block_shape=(KV_TILE_SIZE, dim_d),
+            # block_shape=(KV_TILE_SIZE, DIM_HEAD),
             # order=(1, 0),
-            shape=(dim_d, kv_len),
-            strides=(1, dim_d),
+            shape=(DIM_HEAD, kv_len),
+            strides=(1, DIM_HEAD),
             offsets=(0, 0),
             block_shape=(DIM_HEAD, KV_TILE_SIZE),
             order=(0, 1),
         )
         v_block_ptr = tl.make_block_ptr(
             base=v_ptr,
-            shape=(kv_len, dim_d),
-            strides=(dim_d, 1),
+            shape=(kv_len, DIM_HEAD),
+            strides=(DIM_HEAD, 1),
             offsets=(0, 0),
             block_shape=(KV_TILE_SIZE, DIM_HEAD),
             order=(1, 0),
@@ -86,7 +85,7 @@ def flash_attention_kernel(
         for kv_tile_idx in tl.range(tl.cdiv(kv_len, KV_TILE_SIZE)):
             k_block = tl.load(k_block_ptr, boundary_check=(0, 1), padding_option="zero")
 
-            sw = tl.dot(q_block, k_block) / tl.sqrt(dim_d * 1.0)
+            sw = tl.dot(q_block, k_block) * scale_softmax
             sw = tl.where(
                 kv_tile_idx * KV_TILE_SIZE + tl.arange(0, KV_TILE_SIZE) < kv_len,
                 sw,
@@ -134,6 +133,8 @@ def flash_attention_triton(
     """
     B,H,T,D
     """
+    Q_TILE_SIZE = 32
+
     for ele in [q, k, v]:
         assert ele.is_cuda
         assert ele.is_contiguous()
@@ -143,7 +144,7 @@ def flash_attention_triton(
     assert k.shape[2] == v.shape[2]
     assert k.shape[3] == v.shape[3] == q.shape[3]
 
-    dim_b, n_heads, q_len, dim_d = q.shape
+    dim_b, n_heads, q_len, DIM_HEAD = q.shape
     _, n_kv_heads, kv_len, _ = k.shape
     assert n_heads % n_kv_heads == 0
     n_rep = n_heads // n_kv_heads
@@ -164,13 +165,15 @@ def flash_attention_triton(
         n_kv_heads,
         q_len,
         kv_len,
-        # TODO: only support a constexpr dim_d
-        dim_d,
         n_rep,
+        DIM_HEAD ** (-0.5),
         dtype={
             torch.bfloat16: tl.bfloat16,
             torch.float16: tl.float16,
         }[q.dtype],
+        Q_TILE_SIZE=Q_TILE_SIZE,
+        KV_TILE_SIZE=64,
+        DIM_HEAD=DIM_HEAD,
     )
 
     return out
