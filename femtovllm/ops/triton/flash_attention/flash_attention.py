@@ -88,8 +88,9 @@ def flash_attention_kernel(
         k_block = tl.load(k_block_ptr, boundary_check=(0, 1), padding_option="zero")
 
         sw = tl.dot(q_block, k_block) * scale_softmax
+        offs_kv = kv_tile_idx * KV_TILE_SIZE + tl.arange(0, KV_TILE_SIZE)
         sw = tl.where(
-            kv_tile_idx * KV_TILE_SIZE + tl.arange(0, KV_TILE_SIZE) < kv_len,
+            offs_kv[None, :] < kv_len,
             sw,
             float("-inf"),
         )
