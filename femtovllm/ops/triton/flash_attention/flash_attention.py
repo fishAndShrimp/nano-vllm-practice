@@ -22,9 +22,9 @@ def flash_attention_kernel(
     dtype: tl.constexpr,
 ):
     """ """
-    batch = tl.program_id(1)
+    batch = tl.program_id(2)
 
-    head = tl.program_id(0)
+    head = tl.program_id(1)
     kv_head = head // n_rep
 
     q_ptr = q_ptr_batched + (batch * n_heads + head) * q_len * dim_d
@@ -32,11 +32,12 @@ def flash_attention_kernel(
     v_ptr = v_ptr_batched + (batch * n_kv_heads + kv_head) * kv_len * dim_d
     out_ptr = out_ptr_batched + (batch * n_heads + head) * q_len * dim_d
 
+    q_tile_idx = tl.program_id(0)
     q_block_ptr = tl.make_block_ptr(
         base=q_ptr,
         shape=(q_len, dim_d),
         strides=(dim_d, 1),
-        offsets=(0, 0),
+        offsets=(q_tile_idx * Q_TILE_SIZE, 0),
         block_shape=(Q_TILE_SIZE, DIM_HEAD),
         order=(1, 0),
     )
@@ -44,20 +45,20 @@ def flash_attention_kernel(
         base=out_ptr,
         shape=(q_len, dim_d),
         strides=(dim_d, 1),
-        offsets=(0, 0),
+        offsets=(q_tile_idx * Q_TILE_SIZE, 0),
         block_shape=(Q_TILE_SIZE, DIM_HEAD),
         order=(1, 0),
     )
 
-    m_softmax = tl.zeros((Q_TILE_SIZE, 1), tl.float32)
-    sum_softmax = tl.zeros_like(m_softmax)
-    attn = tl.zeros((Q_TILE_SIZE, DIM_HEAD), tl.float32)
-
-    for q_tile_idx in tl.range(tl.cdiv(q_len, Q_TILE_SIZE)):
+    for _ in tl.range(1):
         q_block = tl.load(q_block_ptr, boundary_check=(0, 1), padding_option="zero")
 
-        m_softmax = m_softmax * 0.0 - float("inf")
-        sum_softmax *= 0.0
+        m_softmax = tl.full(
+            (Q_TILE_SIZE, 1),
+            float("-inf"),
+            tl.float32,
+        )
+        sum_softmax = tl.zeros_like(m_softmax)
 
         k_block_ptr = tl.make_block_ptr(
             base=k_ptr,
@@ -80,6 +81,8 @@ def flash_attention_kernel(
             block_shape=(KV_TILE_SIZE, DIM_HEAD),
             order=(1, 0),
         )
+
+        attn = tl.zeros((Q_TILE_SIZE, DIM_HEAD), tl.float32)
         for kv_tile_idx in tl.range(tl.cdiv(kv_len, KV_TILE_SIZE)):
             k_block = tl.load(k_block_ptr, boundary_check=(0, 1), padding_option="zero")
 
@@ -122,9 +125,6 @@ def flash_attention_kernel(
             boundary_check=(0, 1),
         )
 
-        q_block_ptr = q_block_ptr.advance((Q_TILE_SIZE, 0))
-        out_block_ptr = out_block_ptr.advance((Q_TILE_SIZE, 0))
-
 
 def flash_attention_triton(
     q: torch.Tensor,
@@ -151,6 +151,7 @@ def flash_attention_triton(
     out = torch.empty_like(q)
     flash_attention_kernel[
         (
+            triton.cdiv(q_len, Q_TILE_SIZE),
             n_heads,
             dim_b,
         )
@@ -163,9 +164,10 @@ def flash_attention_triton(
         n_kv_heads,
         q_len,
         kv_len,
+        # TODO: only support a constexpr dim_d
         dim_d,
         n_rep,
-        {
+        dtype={
             torch.bfloat16: tl.bfloat16,
             torch.float16: tl.float16,
         }[q.dtype],
