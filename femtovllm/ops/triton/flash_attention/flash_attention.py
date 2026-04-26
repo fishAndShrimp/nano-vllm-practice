@@ -101,11 +101,9 @@ def flash_attention_kernel(
             sw = tl.exp(sw - m_softmax)
             sum_softmax += tl.sum(sw, 1, keep_dims=True)
 
-            v_block = tl.load(
-                v_block_ptr,
-                boundary_check=(0, 1),
-            )
-            attn += tl.dot(sw, v_block)
+            v_block = tl.load(v_block_ptr, boundary_check=(0, 1), padding_option="zero")
+            sw_cast = tl.cast(sw, dtype)
+            attn += tl.dot(sw_cast, v_block)
 
             k_block_ptr = k_block_ptr.advance(
                 (0, KV_TILE_SIZE),
@@ -115,7 +113,11 @@ def flash_attention_kernel(
             )
 
         attn /= sum_softmax
-        tl.store(out_block_ptr, attn, boundary_check=(0, 1))
+        tl.store(
+            out_block_ptr,
+            tl.cast(attn, dtype),
+            boundary_check=(0, 1),
+        )
 
         q_block_ptr = q_block_ptr.advance((Q_TILE_SIZE, 0))
         out_block_ptr = out_block_ptr.advance((Q_TILE_SIZE, 0))
@@ -163,7 +165,10 @@ def flash_attention_triton(
         kv_len,
         dim_d,
         n_rep,
-        tl.float32,
+        {
+            torch.bfloat16: tl.bfloat16,
+            torch.float16: tl.float16,
+        }[q.dtype],
     )
 
     return out

@@ -6,23 +6,24 @@ import femtovllm.ops.triton
 B = 1
 H = 1
 T = 2
-D = 32
+D = 128
+DTYPE = torch.bfloat16
 
 
 def main():
     q = torch.rand(
         (B, H, T, D),
-        dtype=torch.float32,
+        dtype=DTYPE,
         device="cuda",
     )
     k = torch.rand(
         (B, H, T, D),
-        dtype=torch.float32,
+        dtype=DTYPE,
         device="cuda",
     )
     v = torch.rand(
         (B, H, T, D),
-        dtype=torch.float32,
+        dtype=DTYPE,
         device="cuda",
     )
 
