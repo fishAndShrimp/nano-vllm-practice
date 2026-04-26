@@ -49,6 +49,9 @@ def flash_attention_kernel(
         order=(1, 0),
     )
 
+    ####################
+    ##### no coarse for q
+    ####################
     q_block = tl.load(q_block_ptr, boundary_check=(0, 1), padding_option="zero")
 
     m_softmax = tl.full(
@@ -80,7 +83,7 @@ def flash_attention_kernel(
         order=(1, 0),
     )
 
-    attn = tl.zeros((Q_TILE_SIZE, DIM_HEAD), tl.float32)
+    acc = tl.zeros((Q_TILE_SIZE, DIM_HEAD), tl.float32)
     for kv_tile_idx in tl.range(tl.cdiv(kv_len, KV_TILE_SIZE)):
         k_block = tl.load(k_block_ptr, boundary_check=(0, 1), padding_option="zero")
 
@@ -97,7 +100,7 @@ def flash_attention_kernel(
 
         exp_delta = tl.exp(m_old - m_softmax)
         sum_softmax *= exp_delta
-        attn *= exp_delta
+        acc *= exp_delta
 
         sw = tl.exp(sw - m_softmax)
         sum_softmax += tl.sum(sw, 1, keep_dims=True)
@@ -107,7 +110,7 @@ def flash_attention_kernel(
 
         v_block = tl.load(v_block_ptr, boundary_check=(0, 1), padding_option="zero")
         sw_cast = tl.cast(sw, dtype)
-        attn += tl.dot(sw_cast, v_block)
+        acc += tl.dot(sw_cast, v_block)
 
         k_block_ptr = k_block_ptr.advance(
             (0, KV_TILE_SIZE),
@@ -116,10 +119,10 @@ def flash_attention_kernel(
             (KV_TILE_SIZE, 0),
         )
 
-    attn /= sum_softmax
+    acc /= sum_softmax
     tl.store(
         out_block_ptr,
-        tl.cast(attn, dtype),
+        tl.cast(acc, dtype),
         boundary_check=(0, 1),
     )
 
