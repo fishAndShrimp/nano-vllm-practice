@@ -51,14 +51,36 @@ def my_kernel(..., debug_ptr):
 # Common Kernel Coding Pitfalls / 其他 Kernel 编写踩坑记录
 
 ## 1. Downcast for `tl.dot` Instead of Upcasting / `tl.dot` 计算时向下转型而非向上转型
-To leverage Tensor Cores efficiently, cast FP32 weights down to FP16/BF16 before `tl.dot`, rather than casting the value block up to FP32. The accumulator remains FP32.
-为了高效利用 Tensor Core，在执行 `tl.dot` 前需将 FP32 的权重向下转型（Downcast）为 FP16/BF16，而不是将 Value 块向上转型为 FP32。累加器保持 FP32 精度。
+To leverage Tensor Cores efficiently and predictably, cast FP32 weights down to FP16/BF16 before `tl.dot`, rather than casting the value block up to FP32. The accumulator remains FP32.
+为了高效且可预期地利用 Tensor Core，在执行 `tl.dot` 前需将 FP32 的权重向下转型（Downcast）为 FP16/BF16，而不是将 Value 块向上转型为 FP32。累加器保持 FP32 精度。
 
 ```python
             v_block = tl.load(v_block_ptr, boundary_check=(0, 1), padding_option="zero")
-            sw_cast = tl.cast(sw, dtype) # Downcast to match Tensor Core MMA requirements
+            sw_cast = tl.cast(sw, dtype) # Downcast to FP16/BF16 for standard Tensor Core MMA
             attn += tl.dot(sw_cast, v_block)
 ```
+
+### 1.1 The Hardware Context: Why Downcast? / 硬件背景：为什么要向下转型？
+
+> ⚠️ **Note on Hardware Evolution / 关于硬件演进的提示**
+> The following explanation is based on NVIDIA architectures up to Hopper (Compute Capability 9.0) and the behavior of the Triton compiler as of recent versions. Hardware capabilities and compiler auto-optimizations evolve rapidly, so this behavior may change in future generations (e.g., Blackwell and beyond).
+> 以下解释基于 Hopper 及之前的 NVIDIA 架构（Compute Capability <= 9.0）以及近期 Triton 版本的行为。硬件能力与编译器的自动优化迭代极快，未来的架构（如 Blackwell 及以后）或 Triton 更新可能会改变这一现状。
+
+Although modern NVIDIA GPUs *can* accept FP32 inputs in Tensor Cores via the **TF32 (TensorFloat-32)** format, relying on this implicitly in Triton can be a pitfall for precision-sensitive operations like Flash Attention.
+
+Historically, if you pass FP32 tensors directly into `tl.dot`, the compiler typically faces a dilemma:
+1. **Map to TF32 (if `allow_tf32=True`):** The hardware may truncate the FP32 mantissa to 10 bits. While fast, this aggressive truncation on a Softmax probability matrix can introduce unpredictable numerical errors.
+2. **Fallback to SIMT (if `allow_tf32=False`):** The compiler might bypass Tensor Cores entirely and use standard CUDA scalar cores to compute true FP32 matrix multiplication, which often results in a severe performance drop.
+
+**Best Practice:** By explicitly downcasting via `p = p.to(dtype)` (as demonstrated in the official [Triton Fused Attention Tutorial](https://triton-lang.org/main/getting-started/tutorials/06-fused-attention.html)), we explicitly instruct the compiler to use the standard, mathematically verified FP16/BF16 Tensor Core MMA instructions. This removes ambiguity, ensuring both high throughput and predictable precision across current hardware generations.
+
+尽管现代 NVIDIA GPU 可以通过 **TF32 (TensorFloat-32)** 格式在 Tensor Core 中处理 FP32 输入，但在 Triton 中隐式依赖这一点，对于 Flash Attention 这种对精度敏感的算子来说可能是一个隐患。
+
+从历史经验来看，如果直接将 FP32 张量传给 `tl.dot`，编译器通常会面临两难：
+1. **映射为 TF32（若允许 TF32）：** 硬件可能会将 FP32 的尾数截断为 10 位。虽然速度快，但在 Softmax 概率矩阵上进行这种截断可能会引入不可预期的数值误差。
+2. **退化为 SIMT（若禁用 TF32）：** 编译器可能会完全放弃使用 Tensor Core，转而使用标准的 CUDA 标量核心来硬算纯正的 FP32 矩阵乘法，这通常会导致性能大幅下降。
+
+**最佳实践：** 正如官方 [Fused Attention 教程](https://triton-lang.org/main/getting-started/tutorials/06-fused-attention.html) 中演示的那样，通过 `p = p.to(dtype)` 进行显式的向下转型，可以明确指示编译器使用经过验证的、标准的 FP16/BF16 Tensor Core MMA 指令。这消除了编译期的歧义，在当前各代硬件上都能保证高吞吐量与精度的可预期性。
 
 ## 2. Retain Tensor Shapes with `keep_dims` / 使用 `keep_dims` 维持张量形状以防广播错误
 Always use `keep_dims=True` during reductions (like `tl.max` or `tl.sum`) to prevent dimension collapse, which causes silent broadcasting failures in subsequent operations.
@@ -69,6 +91,27 @@ Always use `keep_dims=True` during reductions (like `tl.max` or `tl.sum`) to pre
 ```
 ```python
             sum_softmax += tl.sum(sw, 1, keep_dims=True)
+```
+
+### 2.1 Compile-Time Shape Checking / 编译期形状检查
+Use `tl.static_print` and `tl.static_assert` to debug tensor shapes during the compilation phase. 
+
+**Pitfall Warning:** Do not use Python f-strings with the `=` specifier (e.g., `f"{m_softmax.shape=}"`) for shape tuples. Triton's AST parser cannot evaluate list/tuple objects in f-strings and will throw a `Cannot evaluate f-string containing non-constexpr` error. Always use comma-separated arguments.
+
+在编译阶段，可以使用 `tl.static_print` 和 `tl.static_assert` 来调试和校验张量形状。
+
+**避坑警告：** 打印形状时，绝不能使用带有 `=` 的 Python f-string 语法（如 `f"{m_softmax.shape=}"`）。Triton 的 AST 解析器无法在 f-string 中处理列表或元组对象，会直接抛出 `Cannot evaluate f-string containing non-constexpr` 编译错误。请务必使用逗号分隔参数。
+
+```python
+            # ❌ Bad: Triton AST parser will crash / Triton AST 解析器会崩溃
+            # tl.static_print(f"{m_softmax.shape=}")
+            
+            # ✅ Good: Comma-separated arguments / 使用逗号分隔参数
+            tl.static_print("  m_softmax.shape =", m_softmax.shape)
+            tl.static_print("sum_softmax.shape =", sum_softmax.shape)
+            
+            # Optional: Assert shapes at compile time / 可选：在编译期断言形状
+            tl.static_assert(m_softmax.shape == [BLOCK_SIZE, 1])
 ```
 
 ## 3. Zero-Padding is Mandatory for OOB Memory / 越界内存必须强制补零

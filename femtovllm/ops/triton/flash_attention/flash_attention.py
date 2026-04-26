@@ -101,6 +101,9 @@ def flash_attention_kernel(
             sw = tl.exp(sw - m_softmax)
             sum_softmax += tl.sum(sw, 1, keep_dims=True)
 
+            tl.static_print("  m_softmax.shape =", m_softmax.shape)
+            tl.static_print("sum_softmax.shape =", sum_softmax.shape)
+
             v_block = tl.load(v_block_ptr, boundary_check=(0, 1), padding_option="zero")
             sw_cast = tl.cast(sw, dtype)
             attn += tl.dot(sw_cast, v_block)
