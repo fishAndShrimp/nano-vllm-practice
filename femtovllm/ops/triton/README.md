@@ -125,3 +125,25 @@ Even if out-of-bounds (OOB) elements are logically masked out or multiplied by z
             v_block = tl.load(v_block_ptr, boundary_check=(0, 1), padding_option="zero")
 ```
 
+## 4. Proper Accumulator Initialization / 正确初始化累加器状态
+
+When parallelizing operations across the Grid (e.g., mapping Query blocks to `tl.program_id(0)`), initialize state variables (`m_softmax`, `sum_softmax`, `acc`) directly in the kernel's main scope using explicitly typed initialization functions like `tl.full` and `tl.zeros`.
+当在 Grid 层面并行化操作时（例如将 Query 块映射到 `tl.program_id(0)`），请直接在 Kernel 的主作用域内使用明确的类型化初始化函数（如 `tl.full` 和 `tl.zeros`）来初始化状态变量。
+
+- **Avoid Hacky Resets:** Do not rely on `m_softmax = m_softmax * 0.0 - float("inf")` to reset states between iterations. It is error-prone and can lead to cross-block state pollution if loop structures change.
+  **避免 Hack 式重置:** 不要依赖 `m_softmax = m_softmax * 0.0 - float("inf")` 这种写法来重置状态。它极易出错，且在循环结构重构时会导致跨 Block 的状态污染（State Pollution）。
+- **Correct `-inf` Initialization:** `m_softmax` must be initialized to `-inf` to ensure the first `tl.maximum` operation in the KV loop works correctly.
+  **正确的 `-inf` 初始化:** `m_softmax` 必须初始化为 `-inf`，以确保 KV 循环中的第一次 `tl.maximum` 操作逻辑绝对正确。
+
+```python
+    # ✅ Good: Explicit initialization in the correct scope / 在正确的作用域内显式初始化
+    m_softmax = tl.full(
+        (Q_TILE_SIZE, 1),
+        float("-inf"),
+        tl.float32,
+    )
+    sum_softmax = tl.zeros_like(m_softmax)
+    
+    acc = tl.zeros((Q_TILE_SIZE, DIM_HEAD), tl.float32)
+```
+
