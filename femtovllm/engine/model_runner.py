@@ -7,7 +7,7 @@ import femtovllm
 from femtovllm.engine.sampler import Sampler
 from femtovllm.engine.sequence import Sequence
 from femtovllm.models import QwenForCausalLM
-from femtovllm.protocol import VarlenAttnMetadata
+from femtovllm.protocol import ImplCustomKernel, VarlenAttnMetadata
 
 
 class ModelRunner:
@@ -170,17 +170,32 @@ class ModelRunner:
         flatten = []
         raw_positions = []
         raw_cu_seqlens = [0]
+
+        if femtovllm._DEV.impl_custom_gemm == ImplCustomKernel.CUDA:
+            Q_TILE_SIZE = 32
+        elif femtovllm._DEV.impl_custom_gemm == ImplCustomKernel.TRITON:
+            Q_TILE_SIZE = 32
+        else:
+            raise NotImplementedError()
+        raw_cu_q_tiles = [0]
+        raw_q_tile_to_seq_idx = []
+
         raw_kv_lens = []
 
         max_q_len = -1
         max_kv_len = -1
-        for seq_const, num_tokens in scheduled_const:
+        for seq_idx, (seq_const, num_tokens) in enumerate(scheduled_const):
             pos = seq_const.num_computed_tokens
             kv_len = pos + num_tokens
 
             flatten.extend(seq_const.token_ids[pos:kv_len])
             raw_positions.extend(range(pos, kv_len))
             raw_cu_seqlens.append(raw_cu_seqlens[-1] + num_tokens)
+
+            num_q_tiles = (num_tokens + Q_TILE_SIZE - 1) // Q_TILE_SIZE
+            raw_cu_q_tiles.append(raw_cu_q_tiles[-1] + num_q_tiles)
+            raw_q_tile_to_seq_idx.extend([seq_idx] * num_q_tiles)
+
             raw_kv_lens.append(kv_len)
 
             max_q_len = max(max_q_len, num_tokens)
@@ -201,6 +216,16 @@ class ModelRunner:
             dtype=torch.int32,
             device=self.device,
         )
+        cu_q_tiles = torch.tensor(
+            raw_cu_q_tiles,
+            dtype=torch.int32,
+            device=self.device,
+        )
+        q_tile_to_seq_idx = torch.tensor(
+            raw_q_tile_to_seq_idx,
+            dtype=torch.int32,
+            device=self.device,
+        )
         kv_lens = torch.tensor(
             raw_kv_lens,
             dtype=torch.int32,
@@ -213,15 +238,25 @@ class ModelRunner:
             varlen_attn_metadata=VarlenAttnMetadata(
                 positions=positions,
                 raw_positions=raw_positions,
+                #####
                 cu_seqlens=cu_seqlens,
                 raw_cu_seqlens=raw_cu_seqlens,
                 max_q_len=max_q_len,
+                #####
+                Q_TILE_SIZE=Q_TILE_SIZE,
+                cu_q_tiles=cu_q_tiles,
+                raw_cu_q_tiles=raw_cu_q_tiles,
+                q_tile_to_seq_idx=q_tile_to_seq_idx,
+                raw_q_tile_to_seq_idx=raw_q_tile_to_seq_idx,
+                #####
                 k_cache_pools=k_cache_pools,
                 v_cache_pools=v_cache_pools,
                 kv_lens=kv_lens,
                 max_kv_len=max_kv_len,
+                #####
                 block_tables=self.pad_block_tables(raw_block_tables),
                 raw_block_tables=raw_block_tables,
+                #####
                 is_decoding=False,
             ),
             skip_lm_head=True,
@@ -277,15 +312,25 @@ class ModelRunner:
             varlen_attn_metadata=VarlenAttnMetadata(
                 positions=positions,
                 raw_positions=raw_positions,
+                #####
                 cu_seqlens=None,
                 raw_cu_seqlens=None,
                 max_q_len=1,
+                #####
+                Q_TILE_SIZE=None,
+                cu_q_tiles=None,
+                raw_cu_q_tiles=None,
+                q_tile_to_seq_idx=None,
+                raw_q_tile_to_seq_idx=None,
+                #####
                 k_cache_pools=k_cache_pools,
                 v_cache_pools=v_cache_pools,
                 kv_lens=kv_lens,
                 max_kv_len=max_kv_len,
+                #####
                 block_tables=self.pad_block_tables(raw_block_tables),
                 raw_block_tables=raw_block_tables,
+                #####
                 is_decoding=True,
             ),
             skip_lm_head=True,

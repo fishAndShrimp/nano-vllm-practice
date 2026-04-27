@@ -25,6 +25,13 @@ class AttentionBackend(str, enum.Enum):
     CUSTOM_GEMM_GEMV = "custom_gemm_gemv"
 
 
+class ImplCustomKernel(str, enum.Enum):
+    """ """
+
+    CUDA = "cuda"
+    TRITON = "triton"
+
+
 @dataclasses.dataclass
 class SamplingParams:
     """
@@ -56,6 +63,12 @@ class VarlenAttnMetadata:
     cu_seqlens: torch.Tensor
     raw_cu_seqlens: list[int]
     max_q_len: int
+
+    Q_TILE_SIZE: int
+    raw_cu_q_tiles: list[int]
+    cu_q_tiles: torch.Tensor
+    raw_q_tile_to_seq_idx: list[int]
+    q_tile_to_seq_idx: torch.Tensor
 
     k_cache_pools: list[torch.Tensor]
     v_cache_pools: list[torch.Tensor]

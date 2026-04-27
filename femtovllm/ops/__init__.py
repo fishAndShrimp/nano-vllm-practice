@@ -1,5 +1,8 @@
 import torch
 
+import femtovllm
+from femtovllm.protocol import ImplCustomKernel
+
 try:
     from femtovllm import _C as _cuda_backend
 except ImportError as e:
@@ -12,6 +15,8 @@ except ImportError as e:
         "    python setup.py install"
     ) from e
 
+
+from femtovllm.ops import triton as _triton_backend
 
 MAX_KV_LEN_NON_SPLIT = _cuda_backend.kMaxKVLenNonSplit
 
@@ -82,12 +87,14 @@ def paged_attention_gemv(
     kv_lens: torch.Tensor,
     max_kv_len: int,
     #####
-    impl: str = "cuda",
+    impl: ImplCustomKernel = None,
 ):
     """ """
     q = _ensure_valid_tensor(q, "q")
 
-    if impl == "cuda":
+    impl = femtovllm._DEV.impl_custom_gemv if (impl is None) else impl
+
+    if impl == ImplCustomKernel.CUDA:
         return _cuda_backend.PagedAttentionGemvCuda(
             q,
             k_pool,
@@ -106,16 +113,22 @@ def paged_attention_gemm(
     v_pool: torch.Tensor,
     cu_seqlens: torch.Tensor,
     max_q_len: int,
+    Q_TILE_SIZE: int,
+    cu_q_tiles: torch.Tensor,
+    q_tile_to_seq_idx: torch.Tensor,
     kv_page_tables: torch.Tensor,
     kv_lens: torch.Tensor,
     positions: torch.Tensor,
     #####
-    impl: str = "cuda",
+    impl: ImplCustomKernel = None,
 ):
     """ """
     q = _ensure_valid_tensor(q, "q")
 
-    if impl == "cuda":
+    impl = femtovllm._DEV.impl_custom_gemm if (impl is None) else impl
+
+    if impl == ImplCustomKernel.CUDA:
+        # raise NotImplementedError("WIP")
         return _cuda_backend.PagedAttentionGemmCuda(
             q,
             k_pool,
@@ -125,6 +138,19 @@ def paged_attention_gemm(
             kv_page_tables,
             kv_lens,
             positions,
+        )
+    elif impl == ImplCustomKernel.TRITON:
+        return _triton_backend.paged_attention_gemm_triton(
+            q=q,
+            k_pool=k_pool,
+            v_pool=v_pool,
+            cu_seqlens=cu_seqlens,
+            cu_q_tiles=cu_q_tiles,
+            q_tile_to_seq_idx=q_tile_to_seq_idx,
+            Q_TILE_SIZE=Q_TILE_SIZE,
+            kv_page_tables=kv_page_tables,
+            kv_lens=kv_lens,
+            positions=positions,
         )
     else:
         raise NotImplementedError()
