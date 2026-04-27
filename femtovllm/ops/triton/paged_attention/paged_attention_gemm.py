@@ -114,7 +114,7 @@ def paged_attention_gemm_kernel(
             float("-inf"),
         )
         qk = tl.where(
-            offs_kv[None, :] < q_positions[:, None],
+            offs_kv[None, :] <= q_positions[:, None],
             qk,
             float("-inf"),
         )

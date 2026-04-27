@@ -147,3 +147,25 @@ When parallelizing operations across the Grid (e.g., mapping Query blocks to `tl
     acc = tl.zeros((Q_TILE_SIZE, DIM_HEAD), tl.float32)
 ```
 
+## 5. Causal Mask Boundary: Use `<=` instead of `<` / Causal Mask 边界条件：务必使用 `<=` 而非 `<`
+
+When applying a causal mask based on sequence positions, the condition must correctly allow a token to attend to itself. Using a strict less-than (`<`) operator will incorrectly mask out the diagonal, resulting in `-inf` scores for self-attention, which corrupts the softmax denominator.
+在基于序列位置应用因果掩码（Causal Mask）时，条件判断必须允许 Token 注意到其自身。如果使用严格的小于号（`<`），会错误地将对角线（Self-Attention）屏蔽掉，导致其注意力得分为 `-inf`，进而破坏 Softmax 的分母计算。
+
+- **The Diagonal Rule:** A token's position is inclusive. If `q_pos == kv_pos`, the attention is valid.
+  **对角线法则:** Token 的位置是包含自身的。当 `q_pos == kv_pos` 时，注意力是有效的。
+- **Correct Condition:** Always use `<=` when comparing KV offsets to Q positions to preserve the diagonal.
+  **正确的条件判断:** 在比较 KV 偏移量与 Q 的位置时，务必使用 `<=`，以保留对角线上的注意力权重。
+
+```python
+        # ❌ Bad: Masks out the token itself / 错误：屏蔽了 Token 自身
+        # qk = tl.where(offs_kv[None, :] < q_positions[:, None], qk, float("-inf"))
+
+        # ✅ Good: Token can attend to itself / 正确：Token 可以注意到自身
+        qk = tl.where(
+            offs_kv[None, :] <= q_positions[:, None],
+            qk,
+            float("-inf"),
+        )
+```
+

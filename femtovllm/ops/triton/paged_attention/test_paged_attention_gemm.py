@@ -137,9 +137,9 @@ paged_attn = femtovllm.ops.triton.paged_attention_gemm_triton(
     kv_lens=kv_lens,
     positions=positions,
 )
-paged_attn = femtovllm._C.PagedAttentionGemmCuda(
-    q, k_pool, v_pool, cu_seqlens, max_q_len, block_tables, kv_lens, positions
-)
+# paged_attn = femtovllm._C.PagedAttentionGemmCuda(
+#     q, k_pool, v_pool, cu_seqlens, max_q_len, block_tables, kv_lens, positions
+# )
 print(paged_attn)
 print(paged_attn.shape)
 print()
