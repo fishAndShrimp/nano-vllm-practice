@@ -177,6 +177,19 @@ def paged_attention_gemm_triton(
     """
     - q: flatten, (n_heads, q_len_flatten, d_head)
     """
+    for ele in [
+        q,
+        k_pool,
+        v_pool,
+        cu_seqlens,
+        cu_q_tiles,
+        q_tile_to_seq_idx,
+        kv_page_tables,
+        kv_lens,
+        positions,
+    ]:
+        assert ele.is_cuda
+        assert ele.is_contiguous()
     # TODO assert checks
 
     n_heads, q_len_flatten, DIM_HEAD = q.shape
