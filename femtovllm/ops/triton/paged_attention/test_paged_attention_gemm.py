@@ -3,11 +3,13 @@ import torch
 from torch.nn import functional as F
 
 import femtovllm
+import femtovllm.ops.triton
 
 ##########
 ##### constants
 ##########
-BLOCK_SIZE = 32
+KV_LEN_PER_PAGE = 16
+Q_TILE_SIZE = 16
 
 
 ##########
@@ -32,14 +34,42 @@ max_q_len = max(
     (y - x)
     for x, y in zip(cu_seqlens[:-1], cu_seqlens[1:])
 )
+
+
+q_tile_to_seq_idx = []
+cu_q_tiles = [0]
+for seq_idx in range(len(cu_seqlens) - 1):
+    q_begin = cu_seqlens[seq_idx]
+    q_end = cu_seqlens[seq_idx + 1]
+    q_len = q_end - q_begin
+    num_tiles = (q_len + Q_TILE_SIZE - 1) // Q_TILE_SIZE
+
+    q_tile_to_seq_idx.extend([seq_idx] * num_tiles)
+    last_cu_q_tiles = cu_q_tiles[-1]
+
+    cu_q_tiles.append(last_cu_q_tiles + num_tiles)
+
+
 B = len(cu_seqlens) - 1
 kv_lens = [
-    BLOCK_SIZE * 4 - 5,
-    BLOCK_SIZE * 3 - 4,
+    KV_LEN_PER_PAGE * 4 - 5,
+    KV_LEN_PER_PAGE * 3 - 4,
 ]
-q = torch.randn((n_heads, cu_seqlens[-1], d_head), device="cuda")
-k_pool = torch.randn((num_blocks, n_kv_heads, BLOCK_SIZE, d_head), device="cuda")
-v_pool = torch.randn((num_blocks, n_kv_heads, BLOCK_SIZE, d_head), device="cuda")
+q = torch.randn(
+    (n_heads, cu_seqlens[-1], d_head),
+    dtype=torch.bfloat16,
+    device="cuda",
+)
+k_pool = torch.randn(
+    (num_blocks, n_kv_heads, KV_LEN_PER_PAGE, d_head),
+    dtype=torch.bfloat16,
+    device="cuda",
+)
+v_pool = torch.randn(
+    (num_blocks, n_kv_heads, KV_LEN_PER_PAGE, d_head),
+    dtype=torch.bfloat16,
+    device="cuda",
+)
 
 
 raw_block_tables = [
@@ -60,19 +90,24 @@ positions = []
 for i in range(B):
     q_len = cu_seqlens[i + 1] - cu_seqlens[i]
     kv_len = kv_lens[i]
-    positions.append(
+    positions.extend(
         [
             #####
             (kv_len - q_len + x)
             for x in range(q_len)
         ]
     )
+print(positions)
 positions = torch.tensor(positions, dtype=torch.int32, device="cuda")
 print(f"{positions=}\n")
 
 
 _cu_seqlens = cu_seqlens
 cu_seqlens = torch.tensor(cu_seqlens, dtype=torch.int32, device="cuda")
+_q_tile_to_seq_idx = q_tile_to_seq_idx
+q_tile_to_seq_idx = torch.tensor(q_tile_to_seq_idx, dtype=torch.int32, device="cuda")
+_cu_q_tiles = cu_q_tiles
+cu_q_tiles = torch.tensor(cu_q_tiles, dtype=torch.int32, device="cuda")
 _kv_lens = kv_lens
 kv_lens = torch.tensor(kv_lens, dtype=torch.int32, device="cuda")
 
@@ -90,6 +125,18 @@ def gen_right_bottom_mask(q_len, kv_len):
     return mask
 
 
+paged_attn = femtovllm.ops.triton.paged_attention_gemm_triton(
+    q=q,
+    k_pool=k_pool,
+    v_pool=v_pool,
+    cu_seqlens=cu_seqlens,
+    cu_q_tiles=cu_q_tiles,
+    q_tile_to_seq_idx=q_tile_to_seq_idx,
+    Q_TILE_SIZE=Q_TILE_SIZE,
+    kv_page_tables=block_tables,
+    kv_lens=kv_lens,
+    positions=positions,
+)
 paged_attn = femtovllm._C.PagedAttentionGemmCuda(
     q, k_pool, v_pool, cu_seqlens, max_q_len, block_tables, kv_lens, positions
 )

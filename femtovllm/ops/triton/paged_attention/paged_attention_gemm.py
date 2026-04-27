@@ -38,7 +38,7 @@ def paged_attention_gemm_kernel(
     out_ptr = out_ptr_batched + head_idx * q_len_flatten * DIM_HEAD
 
     q_begin = tl.load(cu_seqlens_ptr + seq_idx)
-    q_end = tl.load(cu_seqlens_ptr + seq_idx)
+    q_end = tl.load(cu_seqlens_ptr + seq_idx + 1)
     q_len = q_end - q_begin
 
     q_tile_idx = pid0 - tl.load(cu_q_tiles_ptr + seq_idx)
@@ -79,14 +79,14 @@ def paged_attention_gemm_kernel(
     page_table_ptr = kv_page_tables_ptr + seq_idx * num_pages_per_seq
 
     q_tile_begin = q_begin + q_tile_idx * Q_TILE_SIZE
-    offs_q = q_tile_begin + tl.arange(Q_TILE_SIZE)
+    offs_q = q_tile_begin + tl.arange(0, Q_TILE_SIZE)
     q_positions = tl.load(
         positions_ptr + offs_q,
         mask=offs_q < q_end,
         other=kv_len,
     )
 
-    for page_logical_idx in tl.cdiv(kv_len, KV_LEN_PER_PAGE):
+    for page_logical_idx in tl.range(tl.cdiv(kv_len, KV_LEN_PER_PAGE)):
         page_physical_idx = tl.load(page_table_ptr + page_logical_idx)
 
         kt_block_ptr = tl.make_block_ptr(
@@ -107,7 +107,7 @@ def paged_attention_gemm_kernel(
         kt_block = tl.load(kt_block_ptr, boundary_check=(0, 1), padding_option="zero")
 
         qk = tl.dot(q_block, kt_block) * scale_softmax
-        offs_kv = page_logical_idx * KV_LEN_PER_PAGE + tl.arange(KV_LEN_PER_PAGE)
+        offs_kv = page_logical_idx * KV_LEN_PER_PAGE + tl.arange(0, KV_LEN_PER_PAGE)
         qk = tl.where(
             offs_kv[None, :] < kv_len,
             qk,
@@ -155,7 +155,11 @@ def paged_attention_gemm_kernel(
         acc += tl.dot(weights, v_block)
 
     acc /= sum_softmax
-    tl.store(out_block_ptr, acc, boundary_check=(0, 1))
+    tl.store(
+        out_block_ptr,
+        tl.cast(acc, DTYPE),
+        boundary_check=(0, 1),
+    )
 
 
 def paged_attention_gemm_triton(
@@ -206,7 +210,10 @@ def paged_attention_gemm_triton(
         positions_ptr=positions,
         n_rep=n_rep,
         scale_softmax=DIM_HEAD ** (-0.5),
-        DTYPE=q.dtype,
+        DTYPE={
+            torch.float16: tl.float16,
+            torch.bfloat16: tl.bfloat16,
+        }[q.dtype],
         Q_TILE_SIZE=Q_TILE_SIZE,
         KV_LEN_PER_PAGE=KV_LEN_PER_PAGE,
         DIM_HEAD=DIM_HEAD,
